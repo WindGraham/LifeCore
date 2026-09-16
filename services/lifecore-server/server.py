@@ -851,4 +851,5 @@ def console_page() -> str:
     raise HTTPException(404, "console not deployed")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)  # root 无 handler 时 INFO 会被吞（lastResort 只收 WARNING+）
     uvicorn.run(app, host=BIND_HOST, port=PORT, log_level="info")
