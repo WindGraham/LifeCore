@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="lc_primary">#00696B</color>
+    <color name="lc_secondary">#4A6363</color>
+    <string name="app_name">LifeCore</string>
+    <string name="nav_channels">通道</string>
+    <string name="nav_jobs">任务</string>
+    <string name="nav_notify">通知</string>
+    <string name="nav_sessions">对话</string>
+    <string name="nav_settings">设置</string>
+    <style name="Theme.LifeCore" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/lc_primary</item>
+        <item name="colorSecondary">@color/lc_secondary</item>
+    </style>
+</resources>

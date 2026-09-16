@@ -37,6 +37,12 @@ HERMES_BASE = os.environ.get("LC_HERMES_BASE", "http://127.0.0.1:8644")
 HERMES_HOME = os.environ.get("LC_HERMES_HOME", "/root/.hermes")
 AGENT_MD_PATH = Path(os.environ.get("LC_AGENT_MD", "/opt/lifecore/LifeCore/contracts/agent.md"))
 RESTORE_MODE = os.environ.get("LC_RESTORE_MODE", "0") == "1"
+API_SERVER_BASE = os.environ.get("LC_API_SERVER_BASE", "http://127.0.0.1:8642")
+API_SERVER_KEY = os.environ.get("LC_API_SERVER_KEY", "")
+MINIMAX_BASE = os.environ.get("LC_MINIMAX_BASE", "https://api.minimaxi.com")
+MINIMAX_KEY = os.environ.get("LC_MINIMAX_KEY", "")
+MINIMAX_TTS_MODEL = os.environ.get("LC_MINIMAX_TTS_MODEL", "speech-2.8-hd")
+MINIMAX_TTS_VOICE = os.environ.get("LC_MINIMAX_TTS_VOICE", "male-qn-jingying")
 PAIR_CODE_TTL = 600          # 10 分钟（docs/02 §5）
 SIG_TOLERANCE = 300          # HMAC V2 ±300s（agent.md §2.2）
 
@@ -647,6 +653,116 @@ async def cache_json(request: Request, call_next):
         except Exception:
             request.scope["_json"] = {}
     return await call_next(request)
+
+# ───────────────────── core_adapter：Hermes api_server 代理（App 会话/任务/模型）─────────────────────
+async def api_server_proxy(method: str, path: str, body: bytes | None = None,
+                           query: str = "") -> tuple[int, bytes, str]:
+    if not API_SERVER_KEY:
+        raise HTTPException(501, "api_server not configured (LC_API_SERVER_KEY)")
+    url = f"{API_SERVER_BASE}{path}{query}"
+    headers = {"Authorization": f"Bearer {API_SERVER_KEY}"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    try:
+        async with httpx.AsyncClient(timeout=60) as cli:
+            r = await cli.request(method, url, content=body, headers=headers)
+            ct = r.headers.get("content-type", "application/json")
+            return r.status_code, r.content, ct
+    except httpx.ConnectError:
+        raise HTTPException(502, "hermes api_server unreachable (enable platforms.api_server)")
+
+@app.get("/v2/sessions")
+async def v2_sessions(dev: sqlite3.Row = Depends(auth_device)):
+    st, content, ct = await api_server_proxy("GET", "/api/sessions")
+    return Response(content, status_code=st, media_type=ct)
+
+@app.post("/v2/sessions/{sid}/chat")
+async def v2_session_chat(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_device)):
+    raw = await req.body()
+    st, content, ct = await api_server_proxy("POST", f"/api/sessions/{sid}/chat", body=raw)
+    return Response(content, status_code=st, media_type=ct)
+
+@app.get("/v2/jobs")
+async def v2_jobs(dev: sqlite3.Row = Depends(auth_device)):
+    st, content, ct = await api_server_proxy("GET", "/api/jobs")
+    return Response(content, status_code=st, media_type=ct)
+
+@app.get("/v2/models")
+async def v2_models(dev: sqlite3.Row = Depends(auth_device)):
+    st, content, ct = await api_server_proxy("GET", "/v1/models")
+    return Response(content, status_code=st, media_type=ct)
+
+@app.get("/v2/gateway/capabilities")
+async def v2_caps(dev: sqlite3.Row = Depends(auth_device)):
+    st, content, ct = await api_server_proxy("GET", "/v1/capabilities")
+    return Response(content, status_code=st, media_type=ct)
+
+@app.get("/v1/channels")
+def list_channels(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    conn = db()
+    rows = conn.execute("SELECT id,name,archetype,direction,uplink_level,revoked,created_at FROM channels ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return {"channels": [{"channel_id": r["id"], "name": r["name"], "archetype": r["archetype"],
+            "direction": r["direction"], "uplink_level": r["uplink_level"],
+            "revoked": bool(r["revoked"]), "created_at": iso(r["created_at"])} for r in rows]}
+
+# ───────────────────── 语音管线：MiniMax ASR/TTS（key 只存服务端）─────────────────────
+async def minimax_post(path: str, *, json_body: dict | None = None,
+                       multipart: dict | None = None) -> httpx.Response:
+    if not MINIMAX_KEY:
+        raise HTTPException(501, "MiniMax not configured (LC_MINIMAX_KEY)")
+    headers = {"Authorization": f"Bearer {MINIMAX_KEY}"}
+    try:
+        async with httpx.AsyncClient(timeout=120) as cli:
+            if multipart is not None:
+                files = {k: v for k, v in multipart.items() if k == "file"}
+                data = {k: v for k, v in multipart.items() if k != "file"}
+                return await cli.post(MINIMAX_BASE + path, headers=headers, data=data, files=files)
+            return await cli.post(MINIMAX_BASE + path, headers=headers, json=json_body)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"minimax unreachable: {e}")
+
+@app.post("/v2/asr")
+async def v2_asr(request: Request, dev: sqlite3.Row = Depends(auth_device)):
+    """App 上传音频（m4a/mp3/wav/opus，禁止 webm/pcm）→ MiniMax asr-1.0 → 文本。"""
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(400, "empty audio")
+    fmt = (request.query_params.get("format") or "json")
+    level = (request.query_params.get("level") or "sentence")
+    r = await minimax_post("/v1/speech_to_text", multipart={
+        "model": "asr-1.0", "file": ("audio.m4a", audio, "audio/m4a"),
+        "response_format": fmt, "timestamp_level": level, "stream": "false"})
+    if r.status_code != 200:
+        raise HTTPException(502, f"minimax asr error {r.status_code}: {r.text[:300]}")
+    return JSONResponse(json.loads(r.text))
+
+@app.post("/v2/tts")
+async def v2_tts(req: Request, dev: sqlite3.Row = Depends(auth_device)):
+    """文本 → MiniMax t2a_v2 → mp3 字节（App 直接播放）。"""
+    body = req.scope.get("_json") or {}
+    text = str(body.get("text", ""))[:2000]
+    if not text:
+        raise HTTPException(400, "text required")
+    voice = str(body.get("voice", MINIMAX_TTS_VOICE))
+    speed = float(body.get("speed", 1.0))
+    r = await minimax_post("/v1/t2a_v2", json_body={
+        "model": MINIMAX_TTS_MODEL, "text": text, "stream": False,
+        "output_format": "hex", "language_boost": "auto",
+        "voice_setting": {"voice_id": voice, "speed": speed, "vol": 1, "pitch": 0},
+        "audio_setting": {"sample_rate": 32000, "bitrate": 128000, "format": "mp3", "channel": 1}})
+    if r.status_code != 200:
+        raise HTTPException(502, f"minimax tts error {r.status_code}: {r.text[:300]}")
+    data = r.json().get("data", {})
+    if not data.get("audio"):
+        raise HTTPException(502, f"minimax tts empty audio: {r.text[:200]}")
+    mp3 = bytes.fromhex(data["audio"])
+    return Response(mp3, media_type="audio/mpeg")
+
+@app.get("/v2/voices")
+async def v2_voices(dev: sqlite3.Row = Depends(auth_device)):
+    r = await minimax_post("/v1/get_voice", json_body={})
+    return JSONResponse(r.json() if r.status_code == 200 else {"error": r.text[:300]})
 
 if __name__ == "__main__":
     uvicorn.run(app, host=BIND_HOST, port=PORT, log_level="info")
