@@ -187,20 +187,21 @@ def build_argv(action: str, a: dict) -> list[str]:
     """action → gws argv。形状经 gws --dry-run 验证（selftest 覆盖全部动作）。"""
     u = "me"
     if action == "gmail_search":
-        return ["gmail", "users.messages", "list", "--params",
+        return ["gmail", "users", "messages", "list", "--params",
                 json.dumps({"userId": u, "q": a.get("query", ""), "maxResults": int(a.get("max_results", 10))})]
     if action == "gmail_read":
-        return ["gmail", "users.messages", "get", "--params",
+        return ["gmail", "users", "messages", "get", "--params",
                 json.dumps({"userId": u, "id": a["message_id"], "format": a.get("format", "full")})]
     if action == "gmail_draft":
-        return ["gmail", "users.drafts", "create", "--json",
+        return ["gmail", "users", "drafts", "create", "--params", json.dumps({"userId": u}),
+                "--json",
                 json.dumps({"message": {"raw": _b64url_mime(a["to"], a["subject"], a.get("body", ""))}})]
     if action == "gmail_archive":
-        return ["gmail", "users.messages", "modify", "--params",
+        return ["gmail", "users", "messages", "modify", "--params",
                 json.dumps({"userId": u, "id": a["message_id"]}),
                 "--json", json.dumps({"removeLabelIds": ["INBOX"]})]
     if action == "gmail_trash":
-        return ["gmail", "users.messages", "trash", "--params",
+        return ["gmail", "users", "messages", "trash", "--params",
                 json.dumps({"userId": u, "id": a["message_id"]})]
     if action == "calendar_list":
         return ["calendar", "events", "list", "--params",
@@ -678,8 +679,17 @@ def setup_logging(data_dir: Path) -> None:
     root.addHandler(h)
     root.addHandler(logging.StreamHandler())
 
+def _apply_gws_proxy(cfg: dict) -> None:
+    """gws 子进程需访问 *.googleapis.com；本机直连不可达时走 mihomo 等本地代理。
+    bridge 自己的 urllib 走禁代理 opener（_OPENER），两者互不干扰。"""
+    p = (cfg.get("gws_proxy") or "").strip()
+    if p:
+        os.environ["HTTPS_PROXY"] = p
+        os.environ["HTTP_PROXY"] = p
+
 def cmd_run(cfg: dict, data_dir: Path) -> None:
     setup_logging(data_dir)
+    _apply_gws_proxy(cfg)
     state = State(data_dir / "state.db")
     sender = Sender(cfg, state, data_dir)
     stop = threading.Event()
@@ -789,6 +799,7 @@ def main() -> None:
     args = ap.parse_args()
     cfg_path = Path(args.config).expanduser()
     cfg = load_config(cfg_path)
+    _apply_gws_proxy(cfg)
     data_dir = Path(cfg.get("data_dir", str(DEFAULT_DATA))).expanduser()
     if args.cmd == "run":
         cmd_run(cfg, data_dir)

@@ -18,6 +18,7 @@
 ```
 
 - 上行凭证 = 每通道 HMAC secret；下行凭证 = 设备 token（Bearer）。
+- `gws_proxy`：本机 mihomo 代理（googleapis 直连不可达；留空则直连）。bridge 自己访问 VPS 永远不走代理，二者互不干扰。
 - Gmail 监听走**应用专用密码**（IMAP，秒级、零 Cloud 项目）；其余走 **gws OAuth**（一个凭证通吃 Calendar/Drive/Tasks/Gmail API）。
 - 原文（C 级）永不上 VPS：`google_get_original(pointer)` 现场回查。
 
@@ -26,7 +27,7 @@
 ### 1. 装 gws CLI
 
 ```bash
-npm install -g @googleworkspace/cli      # 或下 GitHub Releases 预编译二进制
+npm install -g @googleworkspace/cli      # 需要 root；免 root 就下 GitHub Releases 预编译二进制放 ~/.local/bin/
 gws auth setup                            # 有 gcloud 时全自动；否则按提示去 Cloud Console 手配
 # OAuth consent: External + Testing，把自己加 Test user（个人自用免审核）
 gws auth login -s drive,gmail,calendar,tasks   # 未验证应用别贪多：recommended 85 scope 会炸
@@ -56,6 +57,7 @@ config.json 模板（chmod 600）：
   "device_token": "<配对所得>",
   "device_name": "google-bridge",
   "gws_path": "gws",
+  "gws_proxy": "http://127.0.0.1:7890",
   "gmail": {"enabled": true, "email": "you@gmail.com", "app_password": "xxxx xxxx xxxx xxxx"},
   "calendar": {"enabled": true, "poll_seconds": 60},
   "drive": {"enabled": true, "poll_seconds": 300},
