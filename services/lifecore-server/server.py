@@ -529,6 +529,11 @@ def me(dev: sqlite3.Row = Depends(auth_device)) -> dict:
     return {"device": dev["name"], "fingerprint": FINGERPRINT,
             "registered_at": iso(dev["created_at"]), "server_time": iso(now())}
 
+# ── 状态块出口（hermes pre_llm_call shell hook 拉取；服务只绑回环，公网不可达）──
+@app.get("/v2/state-block")
+def state_block_ep() -> dict:
+    return {"block": state_block()}
+
 # ── 下行命令队列 + 桥心跳（sink 执行臂；google-bridge 等边缘服务只出不进，主动长轮询）──
 CMD_STALE_SEC = 300   # running 超时自动回收（bridge 崩溃兜底）
 
