@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LifeCore 控制台</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--bd:#30363d;--fg:#e6edf3;--mut:#8b949e;--acc:#2f81f7}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,sans-serif}
+header{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--bd);position:sticky;top:0;background:var(--bg);z-index:9}
+header b{font-size:17px}.dot{width:8px;height:8px;border-radius:50%;background:#3fb950;display:inline-block}
+.dot.off{background:#f85149}
+nav{display:flex;gap:4px;padding:8px 16px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+nav button{background:none;border:1px solid var(--bd);color:var(--mut);padding:6px 14px;border-radius:8px;cursor:pointer}
+nav button.on{color:var(--fg);border-color:var(--acc);background:#12233d}
+main{padding:16px;max-width:880px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+input,select,textarea{background:#0d1117;border:1px solid var(--bd);color:var(--fg);border-radius:8px;padding:8px 10px;font:inherit}
+input{flex:1;min-width:120px}
+button{background:#21262d;border:1px solid var(--bd);color:var(--fg);border-radius:8px;padding:8px 14px;cursor:pointer}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button.danger{border-color:#f85149;color:#f85149}
+button:disabled{opacity:.4;cursor:default}
+.list>div{padding:10px 12px;border:1px solid var(--bd);border-radius:10px;margin-bottom:8px;cursor:pointer}
+.list>div:hover{border-color:var(--acc)}
+.small{font-size:12px;color:var(--mut)}
+.msg{padding:8px 12px;border-radius:10px;margin:6px 0;white-space:pre-wrap}
+.msg.me{background:#12233d;margin-left:40px}.msg.ai{background:var(--card);border:1px solid var(--bd);margin-right:40px}
+.msg .tool{font-size:12px;color:var(--mut)}
+#chatlog{max-height:52vh;overflow-y:auto}
+.banner{background:#2d2311;border:1px solid #9e6a03;color:#f0c36d;border-radius:10px;padding:10px 14px;margin-bottom:12px}
+.rec{background:#f85149!important;border-color:#f85149!important}
+select{flex:0 0 auto}
+</style>
+</head>
+<body>
+<header><span class="dot off" id="dot"></span><b>LifeCore 控制台</b><span class="small" id="who"></span><span style="flex:1"></span><span class="small" id="clock"></span></header>
+<nav id="tabs" style="display:none">
+  <button data-t="sessions" class="on">会话</button><button data-t="notify">通知</button>
+  <button data-t="channels">通道</button><button data-t="jobs">任务</button><button data-t="settings">设置</button>
+</nav>
+<main id="main"></main>
+
+<script>
+/* ═════════ 状态与工具 ═════════ */
+const S = {
+  base: localStorage.lc_base || "https://windgraham.art",
+  token: localStorage.lc_token || "",
+  fp: localStorage.lc_fp || "",
+  consent: localStorage.lc_voice === "1",
+  sid: null, speakQ: Promise.resolve()
+};
+const $ = h => { const d=document.createElement("div"); d.innerHTML=h.trim(); return d.firstChild };
+const el = id => document.getElementById(id);
+function save(k,v){ localStorage[k]=v }
+async function api(method, path, body, raw, ctype){
+  const r = await fetch(S.base+path, {method,
+    headers: {...(raw?{"Content-Type":ctype||"application/octet-stream"}:(body!==undefined?{"Content-Type":"application/json"}:{})),
+               ...(S.token?{Authorization:"Bearer "+S.token}:{})},
+    body: raw!==undefined?raw:(body!==undefined?JSON.stringify(body):undefined)});
+  if(r.status===401){ unpair(); throw new Error("凭证失效，请重新配对"); }
+  const ct=r.headers.get("content-type")||"";
+  return ct.includes("json")? r.json() : r;
+}
+function unpair(){ ["lc_token","lc_fp"].forEach(k=>localStorage.removeItem(k)); S.token=""; S.fp=""; location.hash=""; render(); }
+
+/* ═════════ 配对（免扫码：直接导入 code）═════════ */
+function pairView(){
+  el("tabs").style.display="none";
+  el("main").innerHTML = "";
+  const c = $(`<div class="card">
+    <h3 style="margin-top:0">设备配对</h3>
+    <div class="row"><span class="small" style="flex:0 0 70px">服务器</span><input id="p_base" value="${S.base}"></div>
+    <div class="row" style="margin-top:8px"><span class="small" style="flex:0 0 70px">配对码</span><input id="p_code" placeholder="8位配对码（打开 ${S.base.replace("https://","")}/pair 获取，10分钟有效）"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="pri" id="p_go">配对</button>
+      <span class="small">配对后本浏览器获得与 App 相同的设备凭证</span></div>
+    <div class="small" id="p_msg" style="margin-top:8px"></div></div>`);
+  el("main").appendChild(c);
+  el("p_go").onclick = async () => {
+    const base = el("p_base").value.trim().replace(/\/$/,"");
+    const code = el("p_code").value.trim();
+    try{
+      const r = await fetch(base+"/v1/pair",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({code, device_name:"web-console"})});
+      const j = await r.json();
+      if(!r.ok) throw new Error(j.detail||r.status);
+      S.base=base; S.token=j.device_token; S.fp=j.fingerprint;
+      save("lc_base",base); save("lc_token",j.device_token); save("lc_fp",j.fingerprint);
+      render();
+    }catch(e){ el("p_msg").textContent="配对失败："+e.message }
+  };
+}
+
+/* ═════════ 会话（流式对话 + 语音）═════════ */
+async function sessionsView(){
+  const v = $(`<div>
+    <div class="row" style="margin-bottom:10px"><button id="rf">刷新</button><span class="small">选择会话继续对话（与 Hermes 网关内的会话同一对象）</span></div>
+    <div class="list" id="sl"><div class="small">加载中…</div></div></div>`);
+  el("main").innerHTML=""; el("main").appendChild(v);
+  async function load(){
+    try{
+      const j = await api("GET","/v2/sessions");
+      const rows = (j.data||[]).map(s=>`<div data-id="${s.id}">
+        <b>${esc(s.title||s.id)}</b> <span class="small">${s.source||""} · ${s.model||"-"} · ${new Date((s.started_at||0)*1000).toLocaleString()}</span></div>`).join("");
+      el("sl").innerHTML = rows || `<div class="small">暂无可选会话（有新消息后会出现在这里）</div>`;
+      el("sl").querySelectorAll("div[data-id]").forEach(d=>d.onclick=()=>chatView(d.dataset.id));
+    }catch(e){ el("sl").innerHTML=`<div class="small">加载失败：${e.message}</div>` }
+  }
+  el("rf").onclick=load; load();
+}
+function esc(t){ return String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])) }
+
+function chatView(sid){
+  S.sid = sid;
+  const v = $(`<div>
+    <div class="row" style="margin-bottom:8px"><button id="back">← 会话列表</button><b class="small">${esc(sid)}</b>
+      <span style="flex:1"></span><button id="consent_btn" class="small">${S.consent?"🔊 播报已开":"🔇 播报已关"}</button></div>
+    <div id="chatlog"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="mic" title="语音输入">🎙</button>
+      <input id="in" placeholder="输入消息，Enter 发送"><button class="pri" id="send">发送</button>
+    </div><div class="small" id="st"></div></div>`);
+  el("main").innerHTML=""; el("main").appendChild(v);
+  el("back").onclick=sessionsView;
+  const setConsent = on => { S.consent=on; save("lc_voice",on?"1":"0");
+    el("consent_btn").textContent = on?"🔊 播报已开":"🔇 播报已关";
+    if(on) speak("语音播报已启用"); };
+  el("consent_btn").onclick=()=>setConsent(!S.consent);
+  if(!S.consent){
+    el("st").innerHTML="";
+    const b = $(`<div class="banner">🔊 <b>流式语音播报需要你的同意。</b>启用后，每条回复将以流式音频朗读（MiniMax TTS）。
+      <button class="pri" id="agree">同意并启用</button> <button id="no">暂不</button></div>`);
+    el("main").insertBefore(b, el("chatlog"));
+    el("agree").onclick=()=>{ b.remove(); setConsent(true); };
+    el("no").onclick=()=>b.remove();
+  }
+  const log = el("chatlog");
+  const send = async () => {
+    const t = el("in").value.trim(); if(!t) return;
+    el("in").value=""; el("st").textContent="";
+    log.appendChild($(`<div class="msg me">${esc(t)}</div>`));
+    const ai = $(`<div class="msg ai"><span class="body">思考中…</span><div class="tool"></div> <span class="speak" style="cursor:pointer">🔊</span></div>`);
+    log.appendChild(ai); log.scrollTop=1e9;
+    let full="";
+    try{
+      const r = await fetch(S.base+"/v2/sessions/"+sid+"/chat/stream",{method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:"Bearer "+S.token},
+        body:JSON.stringify({message:t})});
+      if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail||r.status);
+      const rd = r.body.getReader(), dec=new TextDecoder(); let buf="";
+      const handle = (ev,data) => {
+        if(ev==="assistant.delta"){ full+=data.delta||""; ai.querySelector(".body").textContent=full; log.scrollTop=1e9; }
+        else if(ev==="tool.progress"){ ai.querySelector(".tool").textContent="⚙ "+(data.tool_name||"")+" "+(data.delta||""); }
+        else if(ev==="assistant.completed"){ full=data.final_response||full; ai.querySelector(".body").textContent=full;
+          ai.querySelector(".tool").textContent=""; }
+        else if(ev==="error"){ el("st").textContent="错误："+(data.message||""); }
+      };
+      while(true){
+        const {done,value}=await rd.read(); if(done)break;
+        buf+=dec.decode(value,{stream:true});
+        const frames=buf.split("\n\n"); buf=frames.pop();
+        for(const f of frames){
+          let ev="",data={};
+          for(const ln of f.split("\n")){ if(ln.startsWith("event:"))ev=ln.slice(6).trim();
+            else if(ln.startsWith("data:")){try{data=JSON.parse(ln.slice(5).trim())}catch{}} }
+          if(ev) handle(ev,data);
+        }
+      }
+      if(!full) ai.querySelector(".body").textContent="(无文本响应)";
+    }catch(e){ ai.querySelector(".body").textContent="⚠ "+e.message }
+    ai.querySelector(".speak").onclick=()=>speak(full);
+    if(S.consent && full) speak(full);
+  };
+  el("send").onclick=send;
+  el("in").onkeydown=e=>{ if(e.key==="Enter") send(); };
+  setupMic(el("mic"), txt=>{ el("in").value=txt; });
+}
+
+/* ── 语音输入：webm 录制 → 重编码 16k WAV → /v2/asr ── */
+function setupMic(btn, onText){
+  let rec=null, chunks=[];
+  btn.onclick = async () => {
+    if(rec){ rec.stop(); return; }
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      rec = new MediaRecorder(stream); chunks=[];
+      rec.ondataavailable = e=>chunks.push(e.data);
+      rec.onstop = async () => {
+        stream.getTracks().forEach(t=>t.stop()); btn.classList.remove("rec"); btn.textContent="🎙";
+        el("st") && (el("st").textContent="转写中…");
+        try{
+          const ab = await new Blob(chunks).arrayBuffer();
+          const wav = await toWav16k(ab);
+          const j = await api("POST","/v2/asr?format=json",undefined,wav,"audio/wav");
+          onText(j.text||"");
+        }catch(e){ el("st") && (el("st").textContent="转写失败："+e.message) }
+      };
+      rec.start(); btn.classList.add("rec"); btn.textContent="⏹";
+    }catch(e){ el("st") && (el("st").textContent="麦克风不可用："+e.message) }
+  };
+}
+async function toWav16k(ab){
+  const ctx = new (window.AudioContext||window.webkitAudioContext)();
+  const buf = await ctx.decodeAudioData(ab);
+  const off = new OfflineAudioContext(1, Math.ceil(buf.duration*16000), 16000);
+  const src = off.createBufferSource(); src.buffer=buf; src.connect(off.destination); src.start();
+  const res = await off.startRendering(); ctx.close();
+  const d = res.getChannelData(0), n=d.length;
+  const out = new DataView(new ArrayBuffer(44+n*2));
+  const W=(o,s)=>{for(let i=0;i<s.length;i++)out.setUint8(o+i,s.charCodeAt(i))};
+  W(0,"RIFF");out.setUint32(4,36+n*2,true);W(8,"WAVE");W(12,"fmt ");out.setUint32(16,16,true);
+  out.setUint16(20,1,true);out.setUint16(22,1,true);out.setUint32(24,16000,true);
+  out.setUint32(28,32000,true);out.setUint16(32,2,true);out.setUint16(34,16,true);
+  W(36,"data");out.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++){ const v=Math.max(-1,Math.min(1,d[i])); out.setInt16(44+i*2,v<0?v*0x8000:v*0x7FFF,true) }
+  return out.buffer;
+}
+
+/* ── 语音输出：句级队列（近流式）── */
+function speak(text){
+  S.speakQ = S.speakQ.then(async ()=>{
+    const parts = (text.match(/[^。！？!?.；;\n]+[。！？!?.；;\n]?/g)||[text]).map(s=>s.trim()).filter(Boolean).slice(0,8);
+    for(const p of parts){
+      try{
+        const r = await fetch(S.base+"/v2/tts",{method:"POST",
+          headers:{"Content-Type":"application/json",Authorization:"Bearer "+S.token},
+          body:JSON.stringify({text:p.slice(0,200)})});
+        if(!r.ok) continue;
+        const url = URL.createObjectURL(await r.blob());
+        await new Promise(res=>{ const a=new Audio(url); a.onended=()=>{URL.revokeObjectURL(url);res()};
+          a.onerror=()=>{URL.revokeObjectURL(url);res()}; a.play().catch(res); });
+      }catch{}
+    }
+  });
+  return S.speakQ;
+}
+
+/* ═════════ 通知（notify 队列 + 反馈）═════════ */
+let notifyTimer=null;
+async function notifyView(){
+  const v = $(`<div>
+    <div class="row" style="margin-bottom:10px"><button id="rf">刷新</button><span class="small">单活动锁：同一时间只等待一条决策，其余排队</span></div>
+    <div id="nv"></div></div>`);
+  el("main").innerHTML=""; el("main").appendChild(v);
+  clearInterval(notifyTimer);
+  async function load(){
+    try{
+      const j = await api("GET","/v2/notify/active");
+      const a=j.active;
+      let h="";
+      if(a){
+        const opts=(a.options||[]).map(o=>`<button class="pri" data-a="${mapAction(o)}">${esc(o)}</button>`).join(" ");
+        h+=`<div class="card"><b>🔔 等待你的决策</b><div style="margin:8px 0">${esc(a.summary||"")}</div>
+          <div class="row">${opts} <span class="small">#${a.id} · ${a.channel_id}</span></div></div>`;
+      } else h+=`<div class="card small">✅ 当前没有等待决策的事项</div>`;
+      if(j.queue&&j.queue.length){
+        h+=`<div class="card"><b>排队中（${j.queue.length}）</b>`+j.queue.map(q=>`<div class="small" style="padding:6px 0">#${q.id} ${esc(q.summary||"")}</div>`).join("")+`</div>`;
+      }
+      el("nv").innerHTML=h;
+      el("nv").querySelectorAll("button[data-a]").forEach(b=>b.onclick=async()=>{
+        b.disabled=true;
+        await api("POST",`/v2/notify/items/${a.id}/feedback`,{action:b.dataset.a}); load();
+      });
+    }catch(e){ el("nv").innerHTML=`<div class="card small">加载失败：${e.message}</div>` }
+  }
+  el("rf").onclick=load; load();
+  notifyTimer=setInterval(load,5000);
+}
+function mapAction(o){ o=o||"";
+  if(/稍后|晚点|snooze/i.test(o)) return "snooze";
+  if(/不做|忽略|取消|dismiss/i.test(o)) return "dismissed";
+  return "actioned"; }
+
+/* ═════════ 通道 ═════════ */
+async function channelsView(){
+  const v = $(`<div>
+    <div class="card"><b>注册新通道</b>
+      <div class="row" style="margin-top:8px"><input id="cn" placeholder="名称（如 wechat-monitor）" style="flex:2">
+      <select id="ca"><option value="message">message</option><option value="metric">metric</option><option value="file">file</option><option value="task">task</option><option value="calendar">calendar</option><option value="alert">alert</option><option value="result">result</option></select>
+      <select id="cu"><option value="AB">AB级</option><option value="A">仅A级</option></select>
+      <button class="pri" id="add">注册</button></div>
+      <div class="small" id="cmsg" style="margin-top:6px"></div></div>
+    <div class="row" style="margin-bottom:8px"><button id="rf">刷新</button></div>
+    <div class="list" id="cl"></div></div>`);
+  el("main").innerHTML=""; el("main").appendChild(v); clearInterval(notifyTimer);
+  async function load(){
+    try{
+      const j = await api("GET","/v1/channels");
+      el("cl").innerHTML = (j.channels||[]).map(c=>`<div>
+        <b>${esc(c.name)}</b> ${c.revoked?'<span class="small" style="color:#f85149">已吊销</span>':""}
+        <div class="small">${c.channel_id} · ${c.archetype} · ${c.uplink_level} · ${c.created_at?new Date(c.created_at*1000).toLocaleString():""}</div>
+        <div class="row" style="margin-top:6px"><button class="small test" data-id="${c.channel_id}">测试事件</button>
+        <button class="small danger del" data-id="${c.channel_id}">删除</button></div></div>`).join("")||`<div class="small">暂无通道</div>`;
+      el("cl").querySelectorAll(".del").forEach(b=>b.onclick=async()=>{ if(confirm("删除该通道？")){ await api("DELETE","/v1/channels/"+b.dataset.id); load(); }});
+      el("cl").querySelectorAll(".test").forEach(b=>b.onclick=async()=>{ await api("POST","/v1/test-event",{channel_id:b.dataset.id}); alert("测试事件已注入"); });
+    }catch(e){ el("cl").innerHTML=`<div class="small">加载失败：${e.message}</div>` }
+  }
+  el("add").onclick=async()=>{
+    try{
+      const j = await api("POST","/v1/channels",{name:el("cn").value.trim(),archetype:el("ca").value,uplink_level:el("cu").value});
+      el("cmsg").innerHTML=`已注册：<code>${j.ingest_url}</code> &nbsp; secret: <code>${j.secret}</code>`;
+      load();
+    }catch(e){ el("cmsg").textContent="失败："+e.message }
+  };
+  el("rf").onclick=load; load();
+}
+
+/* ═════════ 任务（cron）═════════ */
+async function jobsView(){
+  const v=$(`<div><div class="row" style="margin-bottom:10px"><button id="rf">刷新</button>
+    <span class="small">Hermes cron 定时/巡查任务（agent 可自助创建）</span></div><div id="jl" class="list"></div></div>`);
+  el("main").innerHTML=""; el("main").appendChild(v); clearInterval(notifyTimer);
+  async function load(){
+    try{
+      const j = await api("GET","/v2/jobs");
+      const arr = j.jobs||j.data||j; // 形状兜底
+      el("jl").innerHTML = (Array.isArray(arr)?arr:[]).map(x=>`<div><b>${esc(x.name||x.id||"?")}</b>
+        <div class="small">${esc(x.schedule||x.cron||"")} · ${x.enabled===false||x.paused?"⏸ 暂停":"▶ 运行中"} · ${esc(x.deliver||"")}</div></div>`).join("")||`<div class="small">暂无任务</div>`;
+    }catch(e){ el("jl").innerHTML=`<div class="small">加载失败：${e.message}</div>` }
+  }
+  el("rf").onclick=load; load();
+}
+
+/* ═════════ 设置 ═════════ */
+async function settingsView(){
+  const v=$(`<div>
+    <div class="card"><b>设备</b><div class="small" id="me" style="margin-top:6px">加载中…</div></div>
+    <div class="card"><b>TTS 试听</b><div class="row" style="margin-top:8px"><input id="tt" value="你好，这是 LifeCore 语音播报测试。"><button class="pri" id="tp">播放</button></div></div>
+    <div class="card"><b>语音播报同意状态</b><div class="row" style="margin-top:8px"><span class="small" id="cs"></span>
+      <button id="cv">切换</button></div></div>
+    <div class="card"><b>网关能力</b><div class="small" id="cap" style="margin-top:6px">加载中…</div></div>
+    <div class="card"><button class="danger" id="un">解除配对</button></div></div>`);
+  el("main").innerHTML=""; el("main").appendChild(v); clearInterval(notifyTimer);
+  api("GET","/v2/me").then(j=>el("me").innerHTML=`名称：${esc(j.device)}<br>指纹：<code>${esc(j.fingerprint)}</code><br>注册于：${j.registered_at}<br>服务器时间：${j.server_time}`);
+  api("GET","/v2/gateway/capabilities").then(j=>el("cap").textContent=Object.keys(j).filter(k=>j[k]===true).join(", ")||JSON.stringify(j).slice(0,200)).catch(e=>el("cap").textContent="不可用："+e.message);
+  el("tp").onclick=()=>speak(el("tt").value);
+  const cs=()=>el("cs").textContent = S.consent?"已同意（流式音频播报开启）":"未同意（仅手动 🔊 可播放）";
+  cs(); el("cv").onclick=()=>{ S.consent=!S.consent; save("lc_voice",S.consent?"1":"0"); cs(); if(S.consent)speak("语音播报已启用"); };
+  el("un").onclick=()=>{ if(confirm("解除配对？本浏览器将失去访问权限。")) unpair(); };
+}
+
+/* ═════════ 框架 ═════════ */
+const views = {sessions:sessionsView, notify:notifyView, channels:channelsView, jobs:jobsView, settings:settingsView};
+function render(){
+  if(!S.token){ pairView(); el("who").textContent=""; el("dot").className="dot off"; return; }
+  el("tabs").style.display="flex";
+  el("who").textContent = "已配对 · fp "+S.fp.slice(0,12)+"…";
+  el("dot").className="dot";
+  const cur = document.querySelector("#tabs button.on")?.dataset.t || "sessions";
+  views[cur]();
+}
+document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#tabs button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); render();
+});
+setInterval(()=>el("clock").textContent=new Date().toLocaleTimeString(),1000);
+render();
+</script>
+</body>
+</html>
