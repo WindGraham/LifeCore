@@ -104,3 +104,14 @@ hermes-gateway.service（官方 --system --run-as-user root，Restart=always）
 - E2E 已验：MCP 入队→bridge 长轮询→执行→回执→MCP 读回（echo 全链）；失败回执（gws 未授权错误透传）；spool 断点续传（selftest 的假事件在 run 启动时自动补发并真实投递）；hermes agent 实调 google_status 成功。
 - 四通道已注册：google-gmail(ch_f1efbeb1) / google-calendar(ch_39157391) / google-drive(ch_e3a5f8d0) / google-tasks(ch_a0a9a797)，device google-bridge。
 - 待用户：`gws auth login -s drive,gmail,calendar,tasks`（浏览器 OAuth）；Gmail 应用专用密码填 config 后 `gmail.enabled=true`；calendar/drive/tasks 已可开（依赖 gws OAuth）。
+
+### 9.1 gws OAuth 实操坑（2026-09-16 实测）
+
+- **流程**：装 gcloud（Release 二进制免 root 解压 ~/opt 即可）→ `gcloud auth login` → `gcloud projects create <id>`（gws setup 不自动建项目）→ `gws auth setup --project <id>`（能自动开 API；OAuth 客户端建不了，要 console 手点）→ console 建 Desktop OAuth client → `gws auth login -s drive,gmail,calendar,tasks`。
+- **Testing 模式 403 access_denied**：必须把登录账号加进 OAuth consent screen 的 Test users（受众群体→测试用户）。
+- **token 交换也要代理**：gws 换 code 走 oauth2.googleapis.com，systemd 跑时忘设 HTTPS_PROXY 会报 "OAuth flow failed: Hyper error: client error (Connect)"。
+- **后台授权进程用 systemd-run --user**（plain setsid/nohup 会随 DSH 执行器的 scope 回收被杀；user unit 稳）。
+- **远程浏览器授权**：Mac `ssh -L <port>:localhost:<port> -N ...` 隧道 + 本机打印的 URL；gws 每轮端口随机（8085/39397/41209 都出现过）。
+- **client_secret.json 有时不被认**（0.22.5）：用 GOOGLE_WORKSPACE_CLI_CLIENT_ID/SECRET 环境变量最稳；token 落盘（credentials.enc）后普通调用不再需要这对 env。
+- 登录后 `gws drive files list` 实测通；桥四线程（commands+calendar+drive+tasks）心跳全 ok，gws_auth=true。
+- 账号 windgraham648@gmail.com，项目 lifecore-gws-648。
