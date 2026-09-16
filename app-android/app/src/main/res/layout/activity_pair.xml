@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:gravity="center_horizontal" android:padding="24dp">
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="LifeCore 配对" android:textSize="24sp" android:textStyle="bold" android:layout_marginBottom="16dp" />
+    <EditText android:id="@+id/baseInput" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="服务器地址" android:inputType="textUri" android:layout_marginBottom="12dp" />
+    <com.google.android.material.button.MaterialButton android:id="@+id/btnScan"
+        android:layout_width="match_parent" android:layout_height="wrap_content" android:text="扫描二维码配对" />
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="— 或手动输入配对码 —" android:layout_margin="12dp" />
+    <EditText android:id="@+id/codeInput" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="8 位配对码" android:inputType="textCapCharacters" android:layout_marginBottom="8dp" />
+    <Button android:id="@+id/btnPairManual" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="配对" />
+    <TextView android:id="@+id/fpVerify" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="16dp" android:textColor="#888" android:textIsSelectable="true" />
+</LinearLayout>
