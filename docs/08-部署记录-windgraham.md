@@ -34,3 +34,14 @@ hermes-gateway.service（官方 --system --run-as-user root，Restart=always）
 - [ ] TTS 预渲染 + App 播报三层保障（App 开发时）
 - [ ] 加密备份导出（lifecore.db + .hermes → 加密包自动同步对象存储）
 - [ ] voice.windgraham.art 子域已在 nginx 存在（LiveKit 项目）——App 语音管线注意别撞
+
+## 第二次部署（同日）：api_server + MiniMax 语音 + Web 控制台
+
+- **hermes api_server**：`:8642`（仅回环），key 在 `/etc/lifecore/env`（`LC_API_SERVER_KEY`）
+- **MiniMax**：key 存 `/etc/lifecore/env`（`LC_MINIMAX_KEY`），**只在服务端**；TTS `speech-2.8-hd`（hex→mp3）、ASR `asr-1.0`（multipart，禁 webm/pcm——控制台侧已做 16k WAV 重编码）
+- **Web 控制台**：`https://windgraham.art/console`（单文件，services/lifecore-server/static/console.html）
+  - 免扫码配对（直接导入 code）；会话列表+流式对话（SSE：assistant.delta/tool.progress/assistant.completed）
+  - **语音播报需用户显式同意**（localStorage + 页面横幅，浏览器自动播放策略）；句级 TTS 队列近流式输出
+  - 通知队列/反馈、通道 CRUD+测试事件、cron 任务、设置（TTS 试听/能力清单/解绑）
+- 已知：`GET /v2/models` 经 api_server 返回 401（hermes 侧 auth 面差异，待用）
+- 安全提醒：MiniMax key 已在聊天中明文传输，建议尽快轮换
