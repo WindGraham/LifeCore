@@ -1,0 +1,19 @@
+[Unit]
+Description=LifeCore server (pairing+BFF/registrar/inbox+notify)
+After=network.target hermes-gateway.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/lifecore/LifeCore/services/lifecore-server
+Environment=LC_DATA_DIR=/opt/lifecore/data
+Environment=LC_PUBLIC_BASE=https://windgraham.art
+Environment=LC_HERMES_BASE=http://127.0.0.1:8644
+Environment=LC_HERMES_HOME=/root/.hermes
+Environment=LC_AGENT_MD=/opt/lifecore/LifeCore/contracts/agent.md
+ExecStart=/opt/lifecore/venv/bin/python server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
