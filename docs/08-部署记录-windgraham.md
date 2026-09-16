@@ -90,3 +90,17 @@ hermes-gateway.service（官方 --system --run-as-user root，Restart=always）
 - 效果：每轮输入成本 ~7160 → ~200 token（**省 ~97%**）
 - 代价：控制台聊天失去打字机流式效果（回复一次性出现）；功能/质量无影响
 - 排障遗产：`model.streaming` 解析对 YAML bool 友好（str(False)="false"）；重启后立刻测会撞上 gateway 未就绪，等 10 秒
+
+## 9. google-bridge 部署（2026-09-16）
+
+**位置**：用户 PC（arch-asus），systemd user 常驻（linger 已开），repo 于 `services/google-bridge/`。
+
+**实测要点（都是踩过或验证过的）**：
+- gws CLI 子命令**空格分隔**（`gmail users messages list`，不是 `users.messages`）；`drafts.create`/`messages.modify` 必须补 `--params {"userId":"me"}`。全部 19 个动作形状用 `gws --dry-run` 验证（Discovery 动态构建请求，无需 OAuth）。
+- 本机 googleapis 直连不可达：config `gws_proxy=http://127.0.0.1:7890` 只注入 gws 子进程；bridge 自身 urllib 用禁代理 opener（`_OPENER`）——两者必须隔离，否则 VPS 请求被 mihomo 搅黄。
+- gws 免 root 安装：GitHub Releases 二进制解压到 `~/.local/opt/`，软链 `~/.local/bin/gws`（npm -g 前缀是 /usr 需 root）。
+- lifecore-server 新增：`device_commands`（pending/running/done/failed，running 300s 超时自动回炉）、`bridge_heartbeat`、`/v2/commands/pending`（长轮询 wait≤30s）、`/v2/commands/{id}/result|{id}`、`/v2/bridge/heartbeat|status`；`create_channel` 增 `hermes_script` 透传。
+- hermes MCP 挂载：`lifecore_google`（venv python + LC_DATA_DIR + LC_GOOGLE_DEVICE=google-bridge）；SOUL.md 追加 `SOUL-google.md`。
+- E2E 已验：MCP 入队→bridge 长轮询→执行→回执→MCP 读回（echo 全链）；失败回执（gws 未授权错误透传）；spool 断点续传（selftest 的假事件在 run 启动时自动补发并真实投递）；hermes agent 实调 google_status 成功。
+- 四通道已注册：google-gmail(ch_f1efbeb1) / google-calendar(ch_39157391) / google-drive(ch_e3a5f8d0) / google-tasks(ch_a0a9a797)，device google-bridge。
+- 待用户：`gws auth login -s drive,gmail,calendar,tasks`（浏览器 OAuth）；Gmail 应用专用密码填 config 后 `gmail.enabled=true`；calendar/drive/tasks 已可开（依赖 gws OAuth）。
