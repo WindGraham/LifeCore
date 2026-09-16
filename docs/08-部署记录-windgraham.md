@@ -122,3 +122,17 @@ hermes-gateway.service（官方 --system --run-as-user root，Restart=always）
 上行 Bearer 注入。全部实测：SPA 前缀改写 / API 200 / 真实 WS 握手 CONNECTED。
 详见 `deploy/hermes-dashboard-接入记录.md`。
 状态注入升级为 `pre_llm_call` shell hook（覆盖 web UI 等所有对话面，与 BFF 双通道守卫互斥）。
+
+## 11. 数据盘迁移（2026-09-17）
+
+VPS 挂载 60G 数据盘 /dev/vdb1 → /data（与 docker 等共用）。系统盘 20G 曾告警 97%，
+迁移后 55%（8.4G 可用）。全部用 rsync + 绝对软链（路径不变，服务无感）：
+
+- `/root/AIIC-Project` → /data/AIIC-Project（2.3G）
+- pnpm 全局库 → /data/pnpm-store（1.4G）；Playwright 浏览器 → /data/ms-playwright（1.3G）
+- `/opt/lifecore/data` → /data/lifecore-data（SQLite+密钥，停 lifecore-server 2s 搬迁）
+- `/root/.hermes` → /data/hermes（state.db/凭证/SOUL/config，停 gateway+dashboard ~30s）
+
+迁移后全量自检：三服务 active、state-block 注入端点活、桥心跳新鲜（本机 google-bridge
+无感续跑）、5 通道在网、MCP 配置完好。journald 已封顶 100M 防复发。
+恢复注意：灾难重建时先做 /data 软链再启服务；备份应涵盖 /data/lifecore-data 与 /data/hermes。
