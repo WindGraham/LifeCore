@@ -32,6 +32,9 @@ button:disabled{opacity:.4;cursor:default}
 .banner{background:#2d2311;border:1px solid #9e6a03;color:#f0c36d;border-radius:10px;padding:10px 14px;margin-bottom:12px}
 .rec{background:#f85149!important;border-color:#f85149!important}
 select{flex:0 0 auto}
+/* 嵌入模式（Dashboard iframe）：去壳全宽 */
+body.embed header,body.embed nav{display:none}
+body.embed main{max-width:none;padding:12px}
 </style>
 </head>
 <body>
@@ -343,18 +346,23 @@ async function settingsView(){
 
 /* ═════════ 框架 ═════════ */
 const views = {sessions:sessionsView, notify:notifyView, channels:channelsView, jobs:jobsView, settings:settingsView};
+const EMBED = new URLSearchParams(location.search).has("embed");
+if (EMBED) document.body.classList.add("embed");
+function curView(){
+  const h=(location.hash||"").replace(/^#\/?/,"").split("?")[0];
+  return views[h] ? h : (document.querySelector("#tabs button.on")?.dataset.t || "sessions");
+}
 function render(){
   if(!S.token){ pairView(); el("who").textContent=""; el("dot").className="dot off"; return; }
-  el("tabs").style.display="flex";
+  el("tabs").style.display = EMBED ? "none" : "flex";
   el("who").textContent = "已配对 · fp "+S.fp.slice(0,12)+"…";
   el("dot").className="dot";
-  const cur = document.querySelector("#tabs button.on")?.dataset.t || "sessions";
+  const cur = curView();
+  document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on", x.dataset.t===cur));
   views[cur]();
 }
-document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
-  document.querySelectorAll("#tabs button").forEach(x=>x.classList.remove("on"));
-  b.classList.add("on"); render();
-});
+document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ location.hash = b.dataset.t; });
+window.addEventListener("hashchange", render);
 setInterval(()=>el("clock").textContent=new Date().toLocaleTimeString(),1000);
 render();
 </script>
