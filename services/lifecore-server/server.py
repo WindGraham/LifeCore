@@ -435,6 +435,199 @@ def me(dev: sqlite3.Row = Depends(auth_device)) -> dict:
     return {"device": dev["name"], "fingerprint": FINGERPRINT,
             "registered_at": iso(dev["created_at"]), "server_time": iso(now())}
 
+# ── core_adapter 扩展：api_server 回环（会话/任务/cron 管控，BFF 唯一接缝）──
+API_BASE = os.environ.get("LC_API_BASE", "http://127.0.0.1:8642")
+HERMES_CONFIG = Path(os.environ.get("LC_HERMES_CONFIG", "/root/.hermes/config.yaml"))
+HERMES_ENV = Path(HERMES_HOME) / ".env"
+
+def api_server_key() -> str:
+    if HERMES_ENV.exists():
+        for line in HERMES_ENV.read_text().splitlines():
+            if line.startswith("API_SERVER_KEY="):
+                return line.split("=", 1)[1].strip().strip('"')
+    raise HTTPException(500, "API_SERVER_KEY not found in hermes .env")
+
+async def api_call(method: str, path: str, body: dict | None = None, raw: bytes | None = None,
+                   headers_extra: dict | None = None):
+    headers = {"Authorization": "Bearer " + api_server_key()}
+    data = raw
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    headers.update(headers_extra or {})
+    async with httpx.AsyncClient(timeout=120) as cli:
+        r = await cli.request(method, API_BASE + path, content=data, headers=headers)
+        try:
+            return r.status_code, r.json()
+        except Exception:
+            return r.status_code, {"raw": r.text[:500]}
+
+def gateway_state() -> dict:
+    gs = Path(HERMES_HOME) / "gateway_state.json"
+    if gs.exists():
+        try:
+            return json.loads(gs.read_text())
+        except Exception:
+            return {}
+    return {}
+
+# 网关状态总览
+@app.get("/v2/gateway/status")
+def gw_status(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    st = gateway_state()
+    return {"state": st.get("gateway_state"), "version": st.get("code_version"),
+            "platforms": st.get("platforms", {}), "active_agents": st.get("active_agents"),
+            "fingerprint": FINGERPRINT, "server_time": iso(now())}
+
+# 会话：列表 / 新建 / 消息 / 对话 / 改名 / 删 / 锁模型（全部透传 api_server，App 不直连核心）
+@app.get("/v2/sessions")
+async def sessions(q: str = "", dev: sqlite3.Row = Depends(auth_device)):
+    s, r = await api_call("GET", "/api/sessions" + ("?q=" + q if q else ""))
+    return JSONResponse(r, status_code=s)
+
+@app.post("/v2/sessions")
+async def session_create(req: Request, dev: sqlite3.Row = Depends(auth_device)):
+    body = req.scope.get("_json") or {}
+    s, r = await api_call("POST", "/api/sessions", body)
+    return JSONResponse(r, status_code=s)
+
+@app.get("/v2/sessions/{sid}/messages")
+async def session_messages(sid: str, dev: sqlite3.Row = Depends(auth_device)):
+    s, r = await api_call("GET", f"/api/sessions/{sid}/messages")
+    return JSONResponse(r, status_code=s)
+
+@app.post("/v2/sessions/{sid}/chat")
+async def session_chat(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_device)):
+    body = req.scope.get("_json") or {}
+    if not body.get("message"):
+        raise HTTPException(400, "message required")
+    s, r = await api_call("POST", f"/api/sessions/{sid}/chat", {"message": body["message"]})
+    return JSONResponse(r, status_code=s)
+
+@app.patch("/v2/sessions/{sid}")
+async def session_patch(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_device)):
+    s, r = await api_call("PATCH", f"/api/sessions/{sid}", req.scope.get("_json") or {})
+    return JSONResponse(r, status_code=s)
+
+@app.delete("/v2/sessions/{sid}")
+async def session_delete(sid: str, dev: sqlite3.Row = Depends(auth_device)):
+    s, r = await api_call("DELETE", f"/api/sessions/{sid}")
+    return JSONResponse(r, status_code=s)
+
+@app.post("/v2/sessions/{sid}/model")
+async def session_model(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_device)):
+    s, r = await api_call("POST", f"/api/sessions/{sid}/model", req.scope.get("_json") or {})
+    return JSONResponse(r, status_code=s)
+
+# cron（/api/jobs 透传）
+@app.get("/v2/jobs")
+async def jobs(dev: sqlite3.Row = Depends(auth_device)):
+    s, r = await api_call("GET", "/api/jobs")
+    return JSONResponse(r, status_code=s)
+
+@app.post("/v2/jobs")
+async def job_create(req: Request, dev: sqlite3.Row = Depends(auth_device)):
+    s, r = await api_call("POST", "/api/jobs", req.scope.get("_json") or {})
+    return JSONResponse(r, status_code=s)
+
+@app.post("/v2/jobs/{jid}/{action}")
+async def job_action(jid: str, action: str, dev: sqlite3.Row = Depends(auth_device)):
+    if action not in ("pause", "resume", "run"):
+        raise HTTPException(400, "bad action")
+    s, r = await api_call("POST", f"/api/jobs/{jid}/{action}", {})
+    return JSONResponse(r, status_code=s)
+
+@app.delete("/v2/jobs/{jid}")
+async def job_delete(jid: str, dev: sqlite3.Row = Depends(auth_device)):
+    s, r = await api_call("DELETE", f"/api/jobs/{jid}")
+    return JSONResponse(r, status_code=s)
+
+# 网关配置读写（channel_overrides / require_mention / mcp_servers 等；PUT 后重启 gateway，会话自动恢复）
+CONFIG_ALLOWLIST = ("platforms", "mcp_servers", "display", "gateway")
+
+def read_hermes_config() -> dict:
+    import yaml
+    if not HERMES_CONFIG.exists():
+        return {}
+    return yaml.safe_load(HERMES_CONFIG.read_text()) or {}
+
+@app.get("/v2/admin/config")
+def admin_config_get(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    cfg = read_hermes_config()
+    return {"config": {k: v for k, v in cfg.items() if k in CONFIG_ALLOWLIST},
+            "config_path": str(HERMES_CONFIG), "server_time": iso(now())}
+
+@app.put("/v2/admin/config")
+def admin_config_put(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    import yaml
+    body = req.scope.get("_json") or {}
+    patch = body.get("config", {})
+    illegal = [k for k in patch if k not in CONFIG_ALLOWLIST]
+    if illegal:
+        raise HTTPException(400, f"keys not allowed: {illegal}")
+    cfg = read_hermes_config()
+    cfg.update(patch)
+    HERMES_CONFIG.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False))
+    proc = subprocess.run(["systemctl", "restart", "hermes-gateway"], capture_output=True, text=True, timeout=60)
+    time.sleep(5)
+    st = gateway_state()
+    return {"written": list(patch.keys()), "restart_rc": proc.returncode,
+            "gateway_state": st.get("gateway_state"), "version": st.get("code_version")}
+
+@app.get("/v2/admin/mcp")
+def mcp_list(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    return {"mcp_servers": read_hermes_config().get("mcp_servers", {})}
+
+# 通道列表（BFF 视图）
+@app.get("/v1/channels")
+def channels_list(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    conn = db()
+    rows = conn.execute("SELECT * FROM channels WHERE revoked=0 ORDER BY created_at").fetchall()
+    conn.close()
+    return {"channels": [{"channel_id": r["id"], "name": r["name"], "archetype": r["archetype"],
+            "direction": r["direction"], "uplink_level": r["uplink_level"],
+            "ingest_url": f"{PUBLIC_BASE}/hk/{r['id']}", "created_at": iso(r["created_at"])} for r in rows]}
+
+# ── MiniMax 语音管线代理（key 只存服务端，App 不接触；已实测 api.minimaxi.com）──
+MINIMAX_KEY = os.environ.get("LC_MINIMAX_KEY", "")
+MINIMAX_HOST = os.environ.get("LC_MINIMAX_HOST", "https://api.minimaxi.com")
+
+@app.post("/v2/tts")
+async def tts(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> Response:
+    body = req.scope.get("_json") or {}
+    text, voice = str(body.get("text", ""))[:2000], str(body.get("voice", "male-qn-qingse"))
+    if not text:
+        raise HTTPException(400, "text required")
+    if not MINIMAX_KEY:
+        raise HTTPException(500, "LC_MINIMAX_KEY not configured")
+    payload = {"model": "speech-01-240228", "text": text, "stream": False,
+               "voice_setting": {"voice_id": voice, "speed": 1.0, "vol": 1.0, "pitch": 0}}
+    async with httpx.AsyncClient(timeout=60) as cli:
+        r = await cli.post(f"{MINIMAX_HOST}/v1/t2a_v2",
+                           headers={"Authorization": f"Bearer {MINIMAX_KEY}"}, json=payload)
+    j = r.json()
+    audio_hex = (j.get("data") or {}).get("audio")
+    if not audio_hex:
+        raise HTTPException(502, f"minimax error: {j.get('base_resp')}")
+    return Response(bytes.fromhex(audio_hex), media_type="audio/mpeg")
+
+@app.post("/v2/stt")
+async def stt(request: Request, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    if not MINIMAX_KEY:
+        raise HTTPException(500, "LC_MINIMAX_KEY not configured")
+    audio = await request.body()
+    if not audio or len(audio) > 20 * 1024 * 1024:
+        raise HTTPException(400, "audio required (<=20MB)")
+    async with httpx.AsyncClient(timeout=120) as cli:
+        r = await cli.post(f"{MINIMAX_HOST}/v1/speech_to_text",
+                           headers={"Authorization": f"Bearer {MINIMAX_KEY}"},
+                           data={"model": "asr-1.0", "response_format": "json"},
+                           files={"file": ("voice.m4a", audio, "audio/mp4")})
+    j = r.json()
+    if "text" not in j:
+        raise HTTPException(502, f"minimax asr error: {str(j)[:300]}")
+    return {"text": j["text"], "duration": j.get("duration")}
+
 # ── 灾难恢复骨架（docs/02 §8；restore 需显式开启 + 用户确认）──
 @app.post("/v1/restore")
 async def restore(req: Request) -> dict:
