@@ -51,3 +51,18 @@ hermes-gateway.service（官方 --system --run-as-user root，Restart=always）
 - 密码存于服务器 `/etc/lifecore/env`（`CONSOLE_PASSWORD`），htpasswd 在 `/etc/nginx/.htpasswd-lifecore`（644，www-data 可读）
 - 注意：htpasswd 需 644（worker 以 www-data 读）；htpasswd 密码与 env 必须同一次生成（曾两次生成导致 401）
 - API（/v1 /v2 /hk）仍走设备凭证层，不受影响
+
+## 第三次部署：MiniMax-M3 + 缓存实测（2026-09-16）
+
+### 模型接入（踩坑记录）
+- 供应商：hermes 内置 `minimax-cn`（走 `api.minimaxi.com/anthropic` Anthropic 兼容端点）
+- **坑1**：config 必须显式写 `model.provider: "minimax-cn"`——只写 `model.default` 不触发鉴权解析
+- **坑2**：hermes 的 .env 自带**注释掉的占位行**（`# MINIMAX_CN_API_KEY=`），grep 判断会误判"已存在"而漏追加真实 key
+- **坑3**：systemd 单元 Environment 是引号格式（`Environment="HERMES_HOME=..."`），sed 匹配要含引号；最终靠 hermes 自加载 .env 解决
+- 验证：中文对话正常，agent 能读出注入的 [live]+清单全文块
+
+### 缓存实测（MiniMax 自动前缀缓存）
+- 阈值：~940 token 前缀不触发缓存；**3000+ token 稳定命中**
+- 直连 API：turn1 input=3247 → turn2 起 cache_read=3328、每轮新增 input 仅 ~100-140 token；延迟 4.6s→2.6s
+- **全链路**（控制台→BFF注入→hermes→M3）：turn1 5755ms → turn2 1772ms → turn3 1873ms（3倍提速）
+- 结论：架构假设验证——动态 [live] 块在消息头（提示词末尾），系统提示+历史前缀整块命中缓存；清单全文注入不炸缓存
