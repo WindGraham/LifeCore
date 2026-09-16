@@ -1,0 +1,14 @@
+98a99
+> const LifeCorePage = lazy(() => import("@/pages/LifeCorePage"));
+176a178,182
+>   "/lc-chat": LifeCorePage,
+>   "/lc-notify": LifeCorePage,
+>   "/lc-channels": LifeCorePage,
+>   "/lc-jobs": LifeCorePage,
+>   "/lc-settings": LifeCorePage,
+187a194,198
+>   { path: "/lc-chat", label: "LifeCore·对话", icon: MessageSquare },
+>   { path: "/lc-notify", label: "LifeCore·通知裁决", icon: Zap },
+>   { path: "/lc-channels", label: "LifeCore·通道注册", icon: Database },
+>   { path: "/lc-jobs", label: "LifeCore·任务队列", icon: Clock },
+>   { path: "/lc-settings", label: "LifeCore·设置配对", icon: Shield },
