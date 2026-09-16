@@ -161,6 +161,7 @@ async def forward_to_hermes(route_name: str, body: bytes, ts: str, sig: str, req
         return 502, f"hermes_unreachable: {e}"
 
 # ───────────────────────── FastAPI ─────────────────────────
+logger = logging.getLogger("lifecore")
 app = FastAPI(title="lifecore-server", docs_url=None, redoc_url=None)
 init_db()
 
@@ -663,6 +664,45 @@ async def cache_json(request: Request, call_next):
             request.scope["_json"] = {}
     return await call_next(request)
 
+# ── 每回合状态块（docs/02 §12.4：瞬时注入，位置=当前用户消息头部，缓存安全）──
+def state_block(dev_name: str = "") -> str:
+    """紧凑实时状态（≤400字符）：注入到每条进核心 agent 的消息头部。"""
+    parts = []
+    try:
+        conn = db()
+        now_s = datetime.now(timezone.utc).astimezone().strftime("%m-%d %H:%M")
+        act = conn.execute("SELECT id,summary FROM notify_items WHERE state='awaiting_feedback' ORDER BY id LIMIT 1").fetchone()
+        qn = conn.execute("SELECT COUNT(*) c FROM notify_items WHERE state='queued'").fetchone()["c"]
+        if act:
+            parts.append(f"待决策:1({str(act['summary'] or '#'+str(act['id']))[:40]})")
+        if qn:
+            parts.append(f"队列:{qn}")
+        try:
+            rows = conn.execute("SELECT name,value_json,updated_at FROM lists WHERE name='user_state' ORDER BY updated_at DESC LIMIT 1").fetchone()
+            if rows:
+                parts.append(f"用户状态:{str(rows['value_json'])[:60]}")
+        except sqlite3.OperationalError:
+            pass  # lists 表未建（list_manager 未上线）
+        ch = conn.execute("SELECT COUNT(*) c FROM channels WHERE revoked=0").fetchone()["c"]
+        parts.append(f"通道:{ch}")
+        conn.close()
+        return "[live " + now_s + "] " + " | ".join(parts)
+    except Exception:
+        return ""
+
+def inject_state(raw: bytes) -> bytes:
+    """把状态块 prepend 到消息体 message/input 字段（BFF 唯一改写点）。"""
+    try:
+        body = json.loads(raw or b"{}")
+        msg = body.get("message") or body.get("input") or ""
+        block = state_block()
+        if block and not str(msg).startswith("[live "):
+            body["message"] = block + "\n" + msg
+            logger.info("[state] injected: %s...", block[:120])
+        return json.dumps(body, ensure_ascii=False).encode()
+    except Exception:
+        return raw
+
 # ───────────────────── core_adapter：Hermes api_server 代理（App 会话/任务/模型）─────────────────────
 async def api_server_proxy(method: str, path: str, body: bytes | None = None,
                            query: str = "") -> tuple[int, bytes, str]:
@@ -694,7 +734,7 @@ async def v2_sessions(dev: sqlite3.Row = Depends(auth_device)):
 
 @app.post("/v2/sessions/{sid}/chat")
 async def v2_session_chat(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_device)):
-    raw = await req.body()
+    raw = inject_state(await req.body())
     st, content, ct = await api_server_proxy("POST", f"/api/sessions/{sid}/chat", body=raw)
     return Response(content, status_code=st, media_type=ct)
 
@@ -785,7 +825,7 @@ async def v2_voices(dev: sqlite3.Row = Depends(auth_device)):
 async def v2_session_chat_stream(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_device)):
     if not API_SERVER_KEY:
         raise HTTPException(501, "api_server not configured")
-    raw = await req.body()
+    raw = inject_state(await req.body())
     async def upstream():
         try:
             async with httpx.AsyncClient(timeout=None) as cli:
