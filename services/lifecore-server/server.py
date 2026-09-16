@@ -518,7 +518,12 @@ async def session_chat(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_d
     body = req.scope.get("_json") or {}
     if not body.get("message"):
         raise HTTPException(400, "message required")
-    s, r = await api_call("POST", f"/api/sessions/{sid}/chat", {"message": body["message"]})
+    msg = str(body["message"])
+    block = state_block()
+    if block and not msg.startswith("[live "):
+        msg = block + "\n" + msg
+        logger.info("[state] injected: %s...", block[:120])
+    s, r = await api_call("POST", f"/api/sessions/{sid}/chat", {"message": msg})
     return JSONResponse(r, status_code=s)
 
 @app.patch("/v2/sessions/{sid}")
@@ -697,6 +702,7 @@ def inject_state(raw: bytes) -> bytes:
         body = json.loads(raw or b"{}")
         msg = body.get("message") or body.get("input") or ""
         block = state_block()
+        print(f"[PROBE] block={block!r}", flush=True)
         if block and not str(msg).startswith("[live "):
             body["message"] = block + "\n" + msg
             logger.info("[state] injected: %s...", block[:120])
@@ -727,17 +733,6 @@ async def api_server_proxy(method: str, path: str, body: bytes | None = None,
             return r.status_code, r.content, ct
     except httpx.ConnectError:
         raise HTTPException(502, "hermes api_server unreachable (enable platforms.api_server)")
-
-@app.get("/v2/sessions")
-async def v2_sessions(dev: sqlite3.Row = Depends(auth_device)):
-    st, content, ct = await api_server_proxy("GET", "/api/sessions")
-    return Response(content, status_code=st, media_type=ct)
-
-@app.post("/v2/sessions/{sid}/chat")
-async def v2_session_chat(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_device)):
-    raw = inject_state(await req.body())
-    st, content, ct = await api_server_proxy("POST", f"/api/sessions/{sid}/chat", body=raw)
-    return Response(content, status_code=st, media_type=ct)
 
 @app.get("/v2/jobs")
 async def v2_jobs(dev: sqlite3.Row = Depends(auth_device)):
