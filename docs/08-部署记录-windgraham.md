@@ -66,3 +66,20 @@ hermes-gateway.service（官方 --system --run-as-user root，Restart=always）
 - 直连 API：turn1 input=3247 → turn2 起 cache_read=3328、每轮新增 input 仅 ~100-140 token；延迟 4.6s→2.6s
 - **全链路**（控制台→BFF注入→hermes→M3）：turn1 5755ms → turn2 1772ms → turn3 1873ms（3倍提速）
 - 结论：架构假设验证——动态 [live] 块在消息头（提示词末尾），系统提示+历史前缀整块命中缓存；清单全文注入不炸缓存
+
+### 缓存深挖结论（2026-09-16 补充，抓包实证）
+**抓包方法**：本地日志代理 + `MINIMAX_CN_BASE_URL` 指向它，捕获 hermes→MiniMax 原始请求。
+
+| 实验 | 结果 |
+|---|---|
+| 我们侧前缀稳定性 | ✅ system 提示 16979 字符逐字节一致、23 tools 顺序一致、history 严格递增——**我们的组装完全缓存友好** |
+| Anthropic 线 非流式 | ✅ 稳定全命中（3328/16000 tokens，重复多次） |
+| Anthropic 线 流式（hermes 实际用法） | ❌ 永不命中（128 基线；beta header 无效） |
+| OpenAI 线 流式 | ❌ 抽签：8 轮仅 1 轮命中（16128），其余 miss——**MiniMax 流式缓存是节点彩票** |
+
+**结论：MiniMax 流式请求基本无可用前缀缓存 = 平台限制，非我方问题。** 非流式缓存完美证明我们的 prompt 工程是对的。
+
+### 降本调整（已生效）
+- `platform_toolsets` 瘦身：api_server/webhook 只留 [web, cronjob, skills, todo, clarify, tts]（砍 terminal/browser/execute_code/delegation 等执行类——与"核心只调度不执行"一致）
+- 效果：**新会话每轮 input 13851 → 7160 tokens（-48%）**，工具 23 → 10 个
+- 副作用注意：核心 agent 暂不能在 VPS 上跑 shell/浏览器（需要时改 toolsets 配置即恢复）
