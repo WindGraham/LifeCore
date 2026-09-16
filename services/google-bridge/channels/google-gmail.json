@@ -1,0 +1,31 @@
+{
+  "name": "google-gmail",
+  "host": "用户PC（google-bridge 常驻）",
+  "direction": "source",
+  "archetype": "message",
+  "uplink_level": "AB",
+  "report_policy": {
+    "mode": "notify",
+    "triggers": [
+      {
+        "field": "$.category",
+        "op": "eq",
+        "value": "important"
+      }
+    ],
+    "semantics": "个人 Gmail 监听（IMAP IDLE 秒级）。只上报未读新邮件，桥端已过滤推广/社交/论坛/订阅更新类（除非标了 IMPORTANT）。老师、工作、验证码等重要来信应带 requires_feedback 并建议草拟回复（用 google_gmail_draft，系统不直接发信）。summary=发件人|主题，原文用 google_get_original(pointer) 回查。",
+    "requires_feedback": false
+  },
+  "format": {
+    "raw": true,
+    "sample": {
+      "level": "B",
+      "archetype": "message",
+      "pointer": "gmail:example-id",
+      "summary": "…"
+    }
+  },
+  "session": {
+    "discriminator": "$.pointer"
+  }
+}

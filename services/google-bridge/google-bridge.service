@@ -1,0 +1,15 @@
+[Unit]
+Description=LifeCore google-bridge (Google edge listener/executor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/google-bridge run --config %h/.config/google-bridge/config.json
+Restart=always
+RestartSec=5
+# 凭证在 config(600) 与 ~/.config/gws/；进程最小权限即可
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

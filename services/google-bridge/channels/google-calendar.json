@@ -1,0 +1,24 @@
+{
+  "name": "google-calendar",
+  "host": "用户PC（google-bridge 常驻）",
+  "direction": "source",
+  "archetype": "calendar",
+  "uplink_level": "AB",
+  "report_policy": {
+    "mode": "notify",
+    "semantics": "日历变更监听（分钟级增量）：新事件、改期、取消、他人邀请。桥端自动跳过本系统自己创建的事件（extendedProperties 标记），不要对自己刚创建的日程再汇报。临近开始（<30min）的变更建议提级。",
+    "requires_feedback": false
+  },
+  "format": {
+    "raw": true,
+    "sample": {
+      "level": "B",
+      "archetype": "calendar",
+      "pointer": "calendar:example-id",
+      "summary": "…"
+    }
+  },
+  "session": {
+    "discriminator": "$.pointer"
+  }
+}

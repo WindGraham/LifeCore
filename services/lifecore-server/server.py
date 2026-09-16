@@ -108,6 +108,26 @@ def init_db() -> None:
       resolved_at REAL
     );
     CREATE INDEX IF NOT EXISTS idx_notify_state ON notify_items(state);
+    -- 下行命令队列（sink 通道执行臂：MCP/核心入队 → 边缘服务长轮询拉走 → 回执）
+    CREATE TABLE IF NOT EXISTS device_commands(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      args_json TEXT NOT NULL DEFAULT '{}',
+      state TEXT NOT NULL DEFAULT 'pending',   -- pending | running | done | failed
+      result_json TEXT,
+      error TEXT,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cmd_dev_state ON device_commands(device_id, state);
+    -- 边缘桥心跳（google-bridge 等 sink 执行器的健康面）
+    CREATE TABLE IF NOT EXISTS bridge_heartbeat(
+      device_id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      last_seen REAL NOT NULL
+    );
     """)
     # lists 表（六清单本体：user_state/running_items/schedule/...）
     conn.execute("""CREATE TABLE IF NOT EXISTS lists(
@@ -276,6 +296,9 @@ def create_channel(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dic
     rp = json.dumps(body.get("report_policy", {}), ensure_ascii=False)
     disc = body.get("session", {}).get("discriminator") if isinstance(body.get("session"), dict) else None
     host = str(body.get("host", ""))[:128]
+    script = str(body.get("hermes_script", ""))[:128]
+    if ".." in script or script.startswith("/"):
+        raise HTTPException(400, "bad hermes_script")
     conn = db()
     if conn.execute("SELECT 1 FROM channels WHERE name=? AND revoked=0", (name,)).fetchone():
         conn.close(); raise HTTPException(409, "channel name exists")
@@ -283,11 +306,14 @@ def create_channel(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dic
     route_name = f"lc_{ch_id}"
     secret = "lc_" + secrets.token_hex(24)
     # hermes webhook subscribe：热加载，免重启（docs/04 §10）
-    proc = hermes_cli("webhook", "subscribe", route_name,
+    subscribe_args = ["webhook", "subscribe", route_name,
                       "--prompt", "{__raw__}",
                       "--deliver", "log",
                       "--secret", secret,
-                      "--description", f"lifecore channel {name}")
+                      "--description", f"lifecore channel {name}"]
+    if script:
+        subscribe_args += ["--script", script]
+    proc = hermes_cli(*subscribe_args)
     if proc.returncode != 0:
         conn.close()
         raise HTTPException(502, f"hermes subscribe failed: {proc.stderr[:300]}")
@@ -502,6 +528,93 @@ def events_since(since: int = 0, limit: int = 200, dev: sqlite3.Row = Depends(au
 def me(dev: sqlite3.Row = Depends(auth_device)) -> dict:
     return {"device": dev["name"], "fingerprint": FINGERPRINT,
             "registered_at": iso(dev["created_at"]), "server_time": iso(now())}
+
+# ── 下行命令队列 + 桥心跳（sink 执行臂；google-bridge 等边缘服务只出不进，主动长轮询）──
+CMD_STALE_SEC = 300   # running 超时自动回收（bridge 崩溃兜底）
+
+@app.get("/v2/commands/pending")
+def commands_pending(wait: int = 0, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """边缘服务取指令：返回本设备最老 pending 并标记 running；wait≤30s 长轮询。
+    running 超过 CMD_STALE_SEC 自动回炉 pending（执行端掉线不丢令）。"""
+    deadline = now() + min(max(wait, 0), 30)
+    conn = db()
+    try:
+        while True:
+            conn.execute("""UPDATE device_commands SET state='pending', updated_at=?
+                            WHERE device_id=? AND state='running' AND updated_at<?""",
+                         (now(), dev["id"], now() - CMD_STALE_SEC))
+            conn.commit()
+            row = conn.execute("""SELECT * FROM device_commands WHERE device_id=? AND state='pending'
+                                  ORDER BY id LIMIT 1""", (dev["id"],)).fetchone()
+            if row:
+                conn.execute("UPDATE device_commands SET state='running', updated_at=? WHERE id=?",
+                             (now(), row["id"]))
+                conn.commit()
+                return {"command": {"id": row["id"], "action": row["action"],
+                                    "args": json.loads(row["args_json"] or "{}"),
+                                    "created_at": iso(row["created_at"])}}
+            if now() >= deadline:
+                return {"command": None}
+            time.sleep(1)
+    finally:
+        conn.close()
+
+@app.post("/v2/commands/{cid}/result")
+def command_result(cid: int, req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    body = req.scope.get("_json") or {}
+    status = str(body.get("status", ""))
+    if status not in ("done", "failed"):
+        raise HTTPException(400, "status must be done|failed")
+    conn = db()
+    row = conn.execute("SELECT * FROM device_commands WHERE id=? AND device_id=?",
+                       (cid, dev["id"])).fetchone()
+    if not row or row["state"] != "running":
+        conn.close()
+        raise HTTPException(409, "command not running")
+    conn.execute("""UPDATE device_commands SET state=?, result_json=?, error=?, updated_at=?
+                    WHERE id=?""",
+                 (status, json.dumps(body.get("result"), ensure_ascii=False)[:20000],
+                  str(body.get("error", ""))[:1000], now(), cid))
+    conn.commit(); conn.close()
+    return {"ok": True, "id": cid, "status": status}
+
+@app.get("/v2/commands/{cid}")
+def command_get(cid: int, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """MCP 侧查回执（含第三方代取的指令，只要是本设备名下）。"""
+    conn = db()
+    row = conn.execute("SELECT * FROM device_commands WHERE id=? AND device_id=?",
+                       (cid, dev["id"])).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "command not found")
+    return {"id": row["id"], "action": row["action"], "state": row["state"],
+            "result": json.loads(row["result_json"]) if row["result_json"] else None,
+            "error": row["error"], "updated_at": iso(row["updated_at"])}
+
+@app.post("/v2/bridge/heartbeat")
+def bridge_heartbeat(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    body = req.scope.get("_json") or {}
+    name = str(body.get("name", dev["name"]))[:64]
+    detail = json.dumps(body.get("detail", {}), ensure_ascii=False)[:2000]
+    conn = db()
+    conn.execute("""INSERT INTO bridge_heartbeat(device_id,name,detail_json,last_seen) VALUES(?,?,?,?)
+                    ON CONFLICT(device_id) DO UPDATE SET name=?, detail_json=?, last_seen=?""",
+                 (dev["id"], name, detail, now(), name, detail, now()))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+@app.get("/v2/bridge/status")
+def bridge_status(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    conn = db()
+    row = conn.execute("SELECT * FROM bridge_heartbeat WHERE device_id=?", (dev["id"],)).fetchone()
+    last_cmd = conn.execute("SELECT MAX(updated_at) m FROM device_commands WHERE device_id=?",
+                            (dev["id"],)).fetchone()["m"]
+    conn.close()
+    if not row:
+        return {"online": False}
+    return {"online": now() - row["last_seen"] < 120, "name": row["name"],
+            "detail": json.loads(row["detail_json"]), "last_seen": iso(row["last_seen"]),
+            "last_command_at": iso(last_cmd) if last_cmd else None, "server_time": iso(now())}
 
 # ── core_adapter 扩展：api_server 回环（会话/任务/cron 管控，BFF 唯一接缝）──
 API_BASE = os.environ.get("LC_API_BASE", "http://127.0.0.1:8642")
@@ -772,7 +885,6 @@ def inject_state(raw: bytes) -> bytes:
         body = json.loads(raw or b"{}")
         msg = body.get("message") or body.get("input") or ""
         block = state_block()
-        print(f"[PROBE] block={block!r}", flush=True)
         if block and not str(msg).startswith("[live "):
             body["message"] = block + "\n" + msg
             logger.info("[state] injected: %s...", block[:120])

@@ -1,0 +1,24 @@
+{
+  "name": "google-tasks",
+  "host": "用户PC（google-bridge 常驻）",
+  "direction": "source",
+  "archetype": "task",
+  "uplink_level": "AB",
+  "report_policy": {
+    "mode": "silent",
+    "semantics": "Google Tasks 镜像（小时级）。不主动汇报（silent），只保证核心可查可改（google_tasks_* 工具）；如需任务汇总再读。",
+    "requires_feedback": false
+  },
+  "format": {
+    "raw": true,
+    "sample": {
+      "level": "B",
+      "archetype": "task",
+      "pointer": "tasks:example-id",
+      "summary": "…"
+    }
+  },
+  "session": {
+    "discriminator": "$.pointer"
+  }
+}

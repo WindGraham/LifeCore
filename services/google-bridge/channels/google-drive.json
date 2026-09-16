@@ -1,0 +1,25 @@
+{
+  "name": "google-drive",
+  "host": "用户PC（google-bridge 常驻）",
+  "direction": "source",
+  "archetype": "file",
+  "uplink_level": "AB",
+  "report_policy": {
+    "mode": "digest",
+    "digest_window": "15m",
+    "semantics": "网盘变更监听（5-10 分钟增量）：新文件/修改/删除，只报文件名+操作类型。正文内容一律用 google_get_original(pointer) 回查，摘要不要自造。",
+    "requires_feedback": false
+  },
+  "format": {
+    "raw": true,
+    "sample": {
+      "level": "B",
+      "archetype": "file",
+      "pointer": "drive:example-id",
+      "summary": "…"
+    }
+  },
+  "session": {
+    "discriminator": "$.pointer"
+  }
+}
