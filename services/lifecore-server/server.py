@@ -668,6 +668,13 @@ async def api_server_proxy(method: str, path: str, body: bytes | None = None,
         async with httpx.AsyncClient(timeout=60) as cli:
             r = await cli.request(method, url, content=body, headers=headers)
             ct = r.headers.get("content-type", "application/json")
+            if r.status_code == 401:
+                # 上游 hermes 自己的 key 问题，与设备凭证无关：改写 502，
+                # 保住"401 = 设备凭证失效"的语义（否则控制台会误触发解除配对）
+                return (502,
+                        json.dumps({"error": "upstream_auth",
+                                    "detail": "hermes api_server rejected its own API key"}).encode(),
+                        "application/json")
             return r.status_code, r.content, ct
     except httpx.ConnectError:
         raise HTTPException(502, "hermes api_server unreachable (enable platforms.api_server)")
