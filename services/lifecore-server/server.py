@@ -7,6 +7,7 @@ lifecore-server — LifeCore 外围单进程（终审拓扑：pairing+BFF / regi
 from __future__ import annotations
 
 import base64
+import logging
 import hashlib
 import hmac as hmac_mod
 import json
