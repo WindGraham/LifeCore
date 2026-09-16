@@ -65,6 +65,30 @@ class NotifyFragment : Fragment() {
         val v = i.inflate(R.layout.fragment_notify, c, false)
         val swipe = v.findViewById<SwipeRefreshLayout>(R.id.swipe)
         lateinit var loadFn: () -> Unit
+        val btnAuto = v.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnAutoPlay)
+        fun refreshAutoBtn() {
+            val on = android.app.ActivityManager.RunningServiceInfo::class.java != null &&
+                run {
+                    val am = requireContext().getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                    am.getRunningServices(50).any { it.service.className == PlayService::class.java.name }
+                }
+            btnAuto.text = if (on) "⏹ 停止自动播报" else "▶ 开启自动播报（App 存活期自动朗读新汇报）"
+        }
+        btnAuto.setOnClickListener {
+            val ctx = requireContext()
+            val am = ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val on = am.getRunningServices(50).any { it.service.className == PlayService::class.java.name }
+            if (on) ctx.startService(Intent(ctx, PlayService::class.java).setAction(PlayService.ACTION_STOP))
+            else {
+                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                    androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2)
+                }
+                ctx.startForegroundService(Intent(ctx, PlayService::class.java))
+            }
+            btnAuto.postDelayed({ refreshAutoBtn() }, 800)
+        }
         val card = v.findViewById<View>(R.id.activeCard)
         val queueTv = v.findViewById<TextView>(R.id.queueList)
 
@@ -111,6 +135,7 @@ class NotifyFragment : Fragment() {
             }
         } }
         swipe.setOnRefreshListener { loadFn() }; loadFn()
+        refreshAutoBtn()
         return v
     }
 }

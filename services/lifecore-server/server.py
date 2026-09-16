@@ -24,7 +24,7 @@ import uvicorn
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 
 # ───────────────────────── 配置 ─────────────────────────
 DATA_DIR = Path(os.environ.get("LC_DATA_DIR", "/opt/lifecore/data"))
@@ -36,6 +36,7 @@ PORT = int(os.environ.get("LC_PORT", "8790"))
 HERMES_BASE = os.environ.get("LC_HERMES_BASE", "http://127.0.0.1:8644")
 HERMES_HOME = os.environ.get("LC_HERMES_HOME", "/root/.hermes")
 AGENT_MD_PATH = Path(os.environ.get("LC_AGENT_MD", "/opt/lifecore/LifeCore/contracts/agent.md"))
+STATIC_DIR = Path(os.environ.get("LC_STATIC_DIR", str(Path(__file__).parent / "static")))
 RESTORE_MODE = os.environ.get("LC_RESTORE_MODE", "0") == "1"
 API_SERVER_BASE = os.environ.get("LC_API_SERVER_BASE", "http://127.0.0.1:8642")
 API_SERVER_KEY = os.environ.get("LC_API_SERVER_KEY", "")
@@ -763,6 +764,35 @@ async def v2_tts(req: Request, dev: sqlite3.Row = Depends(auth_device)):
 async def v2_voices(dev: sqlite3.Row = Depends(auth_device)):
     r = await minimax_post("/v1/get_voice", json_body={})
     return JSONResponse(r.json() if r.status_code == 200 else {"error": r.text[:300]})
+
+# ── 会话流式对话（SSE 透传，App/控制台共用）──
+@app.post("/v2/sessions/{sid}/chat/stream")
+async def v2_session_chat_stream(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_device)):
+    if not API_SERVER_KEY:
+        raise HTTPException(501, "api_server not configured")
+    raw = await req.body()
+    async def upstream():
+        try:
+            async with httpx.AsyncClient(timeout=None) as cli:
+                async with cli.stream("POST",
+                    f"{API_SERVER_BASE}/api/sessions/{sid}/chat/stream",
+                    content=raw,
+                    headers={"Authorization": f"Bearer {API_SERVER_KEY}",
+                             "Content-Type": "application/json"}) as r:
+                    async for chunk in r.aiter_raw():
+                        yield chunk
+        except Exception as e:
+            yield f"event: error\ndata: {{\"message\": \"proxy: {e}\"}}\n\n".encode()
+    return StreamingResponse(upstream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+# ── Web 控制台（全功能parity，免安装测试）──
+@app.get("/console", response_class=HTMLResponse)
+def console_page() -> str:
+    f = STATIC_DIR / "console.html"
+    if f.exists():
+        return f.read_text(encoding="utf-8")
+    raise HTTPException(404, "console not deployed")
 
 if __name__ == "__main__":
     uvicorn.run(app, host=BIND_HOST, port=PORT, log_level="info")
