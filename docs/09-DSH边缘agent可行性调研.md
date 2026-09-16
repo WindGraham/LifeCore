@@ -56,3 +56,16 @@ DSH 直接作为符合 edge-agent.md 的地方值守 agent：**可行，且是�
 建议首个试点：微信摘要值守（MEMORY.md 的人物关系/教训段与它的工作方式完全同构），
 上报/回查/approval 全部复用今日已实证的 google-bridge 管道，新增工作量约一个
 值守 prompt + schedule 配置 + systemd 单元。
+
+## 补充对照（用户追加的五条理想特性，2026-09-17 二轮验证）
+
+| 理想特性 | DSH 实证 | 判定 |
+|---|---|---|
+| 核心多次发信、地方有记忆 | 会话即持久对话：队列可无限下发指令（FIFO 逐条进会话）；跨会话引用是正式能力（context 包：其他会话可作为有界快照进入上下文）；记忆=持久会话+MEMORY.md+memory MCP（config/examples/mcp-memory 叠层） | ✅ |
+| 自己分布 subagent | subagent 包：进程内新子代理 / **带历史种子的子代理** / **出进程子代理（ACP / Codex / Claude Code / 另一套 Harness）**；模型可给邻接 agent 发消息、中断、列状态 | ✅ 且能跨 harness 派发 |
+| 自动 compact | compaction 包：**token 压力升高自动压缩历史（dsh-base 默认启用）** + /compact 手动 + 超大工具输出先裁剪 | ✅ 默认自动 |
+| 设定定时任务 | schedule 包：agent 自建延时/定点/间隔 reminder，持久化、重启存活 | ✅ |
+
+**二轮结论**：这五条里最重的"自动 compact + 自主派 subagent"在 DSH 里是默认开启/正式包的级别，
+不是边角功能——**可能性上调至 ~90%**。剩余风险仍是软件年轻度（schedule/subagent 交互建议
+先一周试点），而非能力缺口。
