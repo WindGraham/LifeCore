@@ -267,3 +267,33 @@ root 解码 DB 在地方即全量存档。地方常驻摘要 agent（值守形�
 - `/btw`、`/rollback`、bg 会话的上下文关系（场景 9 的 tree 雏形）；
 - webhook subscribe 同名更新的确切语义；
 - channel_overrides / config.yaml 经 dashboard PUT 后的热生效范围。
+
+---
+
+## 14. 汇报触发与反馈排队协议（2026-09-16）
+
+### 14.1 汇报触发的三层结构
+
+1. **通道级声明**（注册时，agent.md §2.1 的 `report_policy`）：模式 `notify|digest|alert|silent` + 机器可读 triggers + **语义说明**（程序用途、"什么叫重要"——agent 做超出列举式触发条件的判断所依赖的原料）；
+2. **条目级提示**（每次上报）：`suggested_priority` / `requires_feedback` 可覆盖通道默认；
+3. **核心裁决**：声明是原料；"此刻是否打扰"仍由核心 agent 综合用户状态、静音时段、跨源上下文裁决（裁决集中原则不变）。
+
+### 14.2 notify 队列：并发与音频单工之间的串行化点
+
+**物理依据：agent 并发，但用户的耳朵和嘴是单工的。** 所有汇报先入队，唯一消费者按序播报——并发产生与串行播报在此解耦，agent 间零互斥（场景 8"氛围"的执行机制）。
+
+**条目状态机**：
+
+```
+queued → active ─┬─ 无需反馈 → resolved(logged)
+                 └─ requires_feedback → awaiting_feedback ─┬─ 用户回复 → resolved(actioned/dismissed/snoozed)
+                                                            └─ 超时 → resolved(expired → 默认降级 logged，不催)
+```
+
+**四条规则**：
+1. **单活动锁**：至多一条 awaiting_feedback 处于活动态；后续汇报（含需反馈者）进 FIFO——排队顺序即决策顺序；
+2. **alert 插队**：alert 级可打断当前活动项，被断者回队列头部；
+3. **超时默认安静**：非 alert 项超时自动 logged，不重复打扰（是否改催由用户在 App 调）；
+4. **闭环**：用户回"晚点提醒" → 条目 resolved(snoozed) + agent 调提醒程序 MCP tool 改期 → 到点新触发 → 新条目入队（与场景 2 闭环）。
+
+**落点**：notify 队列为 list_manager 第一公民；播报走 deliver/ntfy；用户回复走 App 上行 webhook → Hermes 会话 → agent 调队列工具。VPS 核心（Hermes）零修改。

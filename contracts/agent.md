@@ -31,6 +31,13 @@ curl -X POST https://<域名>/v1/channels \
     "direction": "source",
     "archetype": "message",
     "uplink_level": "AB",
+    "report_policy": {
+      "mode": "notify | digest | alert | silent",
+      "triggers": [{ "field": "$.severity", "op": "gte", "value": "high" }],
+      "semantics": "这个程序的用途是什么、什么情况算重要（自然语言，agent 靠它做判断）",
+      "digest_window": "15m",
+      "requires_feedback": false
+    },
     "format": { "raw": true, "sample": { "sender": "张三", "group": "课程群", "text": "作业明天交" } },
     "session": { "discriminator": "$.group", "fallback": "$.sender" }
   }'
@@ -40,7 +47,21 @@ curl -X POST https://<域名>/v1/channels \
 #         "query_tools_hint": "请在你的 MCP server 中暴露 get_original(pointer) 等回查工具" }
 ```
 
-字段：`direction` = source（只报）/ sink（只收动作）/ both；`archetype` = message|metric|file|task|calendar|alert|result 七选一；`uplink_level` = A|AB|ABC（默认 AB）；`format` 三档声明（直接 CloudEvents / mapping / raw+样本，注册器会回复建议映射）；`session.discriminator` = 你数据里当"会话/话题"用的字段（JSONPath），用于核心的上下文归属。
+字段：`direction` = source（只报）/ sink（只收动作）/ both；`archetype` = message|metric|file|task|calendar|alert|result 七选一；`uplink_level` = A|AB|ABC（默认 AB）；`report_policy` = **汇报策略声明**（见 §2.1a，缺省按 mode=notify 处理）；`format` 三档声明（直接 CloudEvents / mapping / raw+样本，注册器会回复建议映射）；`session.discriminator` = 你数据里当"会话/话题"用的字段（JSONPath），用于核心的上下文归属。
+
+### 2.1a 汇报策略声明（report_policy，核心裁决的原料）
+
+你比核心更懂你的数据——注册时必须声明"什么情况下值得汇报"：
+
+| 字段 | 语义 |
+|---|---|
+| `mode` | `notify` 每条都是候选，核心裁（默认）；`digest` 合并为定期摘要播报；`alert` 可破静音时段（必须配 triggers 说明升级条件）；`silent` 永不主动汇报，只能被查询（隐私敏感通道的归宿） |
+| `triggers` | 机器可读的触发条件（JSONPath + 比较算子），列举你认为重要的情形 |
+| `semantics` | **必填自然语言**：这个程序是干什么的、什么情况算重要。核心 agent 用它做 triggers 没列举到的判断 |
+| `digest_window` | digest 模式的合并窗口 |
+| `requires_feedback` | 默认 false；true 表示你的汇报通常需要用户决策（做/不做/稍后），播报将排队等待回复 |
+
+**注意**：声明是建议不是保证——最终打扰裁决在核心 agent（它要综合用户状态、静音时段、跨源上下文）。条目级上报可带 `suggested_priority`/`requires_feedback` 覆盖通道默认。
 
 ### 2.2 上行（HMAC，通用 V2）
 
@@ -96,7 +117,8 @@ curl https://<域名>/v1/channels/ch_x9f2 \  # 事件计数、最近错误
 2. **触发条件**：明确什么事件值得上报（变化、越阈、完成、异常），什么不上（心跳、重复、无变化——静默）；
 3. **结束条件**：这个汇报关系何时消亡（任务完成、程序退出、条件不再成立）；
 4. **自删除**：结束条件达成时，调 `DELETE /v1/channels/{id}` 注销，并说明原因；
-5. **验收**：发测试事件 → 查 `/v1/channels/{id}` 计数 → 报告用户"已上线/测试事件可见"。
+5. **汇报条目带反馈提示**：若该条需要用户决策，附 `"requires_feedback": true, "feedback_options": ["做", "不做", "稍后提醒"]`——播报将排队等待回复（单活动锁，见 VPS 侧 notify 队列协议）；
+6. **验收**：发测试事件 → 查 `/v1/channels/{id}` 计数 → 报告用户"已上线/测试事件可见"。
 
 ## 6. 日志契约
 

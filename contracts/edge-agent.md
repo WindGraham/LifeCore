@@ -53,13 +53,16 @@ loop:
   "thread": "课程群",
   "occurred_at": "2026-09-15T14:02:00+08:00",
   "suggested_priority": "normal",     // 只是建议，裁决在核心
+  "requires_feedback": false,          // true = 需要用户决策（做/不做/稍后），播报将排队等待回复
+  "feedback_options": ["做", "不做", "稍后提醒"],
   "envelope": { "since": "wx:8801", "count_collapsed": 37 }
 }
 ```
 
 - `suggested_priority` 不越权：地方说"建议"，VPS 核心做打扰裁决（裁决集中原则）；
 - 爆发合并：`envelope.count_collapsed` 告知吞并了多少条，核心播报"37 条里 1 条值得看"；
-- A 级通道（敏感群）只发元数据信封（谁/何时/几条），summary 为 null。
+- A 级通道（敏感群）只发元数据信封（谁/何时/几条），summary 为 null；
+- **反馈请求要克制**：requires_feedback=true 会占用用户的单工注意力通道（同一时间系统只等一条回复，其余排队）。只有真正需要决策的才置 true，可推断的（如"有新作业"默认不需要）不要占。
 
 ## 4. 回查义务（C 级不出地方的落实）
 
