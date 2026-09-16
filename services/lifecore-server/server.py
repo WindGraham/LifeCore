@@ -108,6 +108,12 @@ def init_db() -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_notify_state ON notify_items(state);
     """)
+    # 迁移：host 字段（哪台设备——接入服务清单的必需维度）
+    try:
+        conn.execute("ALTER TABLE channels ADD COLUMN host TEXT NOT NULL DEFAULT ''")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -257,6 +263,7 @@ def create_channel(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dic
     uplink = str(body.get("uplink_level", "AB"))
     rp = json.dumps(body.get("report_policy", {}), ensure_ascii=False)
     disc = body.get("session", {}).get("discriminator") if isinstance(body.get("session"), dict) else None
+    host = str(body.get("host", ""))[:128]
     conn = db()
     if conn.execute("SELECT 1 FROM channels WHERE name=? AND revoked=0", (name,)).fetchone():
         conn.close(); raise HTTPException(409, "channel name exists")
@@ -273,12 +280,12 @@ def create_channel(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dic
         conn.close()
         raise HTTPException(502, f"hermes subscribe failed: {proc.stderr[:300]}")
     conn.execute("""INSERT INTO channels(id,name,archetype,direction,uplink_level,report_policy,
-                    session_discriminator,route_name,secret,created_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                 (ch_id, name, archetype, direction, uplink, rp, disc, route_name, secret, now()))
+                    session_discriminator,host,route_name,secret,created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                 (ch_id, name, archetype, direction, uplink, rp, disc, host, route_name, secret, now()))
     conn.commit(); conn.close()
     return {"channel_id": ch_id, "ingest_url": f"{PUBLIC_BASE}/hk/{ch_id}",
-            "secret": secret, "created": iso(now())}
+            "secret": secret, "host": host, "created": iso(now())}
 
 @app.get("/v1/channels/{ch_id}")
 def channel_stats(ch_id: str, dev: sqlite3.Row = Depends(auth_device)) -> dict:
@@ -289,6 +296,7 @@ def channel_stats(ch_id: str, dev: sqlite3.Row = Depends(auth_device)) -> dict:
     stats = conn.execute("SELECT COUNT(*) c, MAX(received_at) last FROM events WHERE channel_id=?", (ch_id,)).fetchone()
     conn.close()
     return {"channel_id": ch_id, "name": ch["name"], "archetype": ch["archetype"],
+            "host": ch["host"] if "host" in ch.keys() else "",
             "uplink_level": ch["uplink_level"], "revoked": bool(ch["revoked"]),
             "event_count": stats["c"], "last_event_at": iso(stats["last"]) if stats["last"] else None}
 
@@ -708,10 +716,10 @@ async def v2_caps(dev: sqlite3.Row = Depends(auth_device)):
 @app.get("/v1/channels")
 def list_channels(dev: sqlite3.Row = Depends(auth_device)) -> dict:
     conn = db()
-    rows = conn.execute("SELECT id,name,archetype,direction,uplink_level,revoked,created_at FROM channels ORDER BY created_at DESC").fetchall()
+    rows = conn.execute("SELECT id,name,archetype,direction,uplink_level,host,revoked,created_at FROM channels ORDER BY created_at DESC").fetchall()
     conn.close()
     return {"channels": [{"channel_id": r["id"], "name": r["name"], "archetype": r["archetype"],
-            "direction": r["direction"], "uplink_level": r["uplink_level"],
+            "direction": r["direction"], "uplink_level": r["uplink_level"], "host": r["host"],
             "revoked": bool(r["revoked"]), "created_at": iso(r["created_at"])} for r in rows]}
 
 # ───────────────────── 语音管线：MiniMax ASR/TTS（key 只存服务端）─────────────────────

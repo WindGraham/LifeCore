@@ -28,6 +28,7 @@ curl -X POST https://<域名>/v1/channels \
   -H "Content-Type: application/json" \
   -d '{
     "name": "wechat-monitor",
+    "host": "我的手机（root 解码，常驻）",
     "direction": "source",
     "archetype": "message",
     "uplink_level": "AB",
@@ -47,7 +48,7 @@ curl -X POST https://<域名>/v1/channels \
 #         "query_tools_hint": "请在你的 MCP server 中暴露 get_original(pointer) 等回查工具" }
 ```
 
-字段：`direction` = source（只报）/ sink（只收动作）/ both；`archetype` = message|metric|file|task|calendar|alert|result 七选一；`uplink_level` = A|AB|ABC（默认 AB）；`report_policy` = **汇报策略声明**（见 §2.1a，缺省按 mode=notify 处理）；`format` 三档声明（直接 CloudEvents / mapping / raw+样本，注册器会回复建议映射）；`session.discriminator` = 你数据里当"会话/话题"用的字段（JSONPath），用于核心的上下文归属。
+字段：`host` = 这个程序跑在哪台设备/位置（接入服务清单的"哪台设备"维度，必填）；`direction` = source（只报）/ sink（只收动作）/ both；`archetype` = message|metric|file|task|calendar|alert|result 七选一；`uplink_level` = A|AB|ABC（默认 AB）；`report_policy` = **汇报策略声明**（见 §2.1a，缺省按 mode=notify 处理）；`format` 三档声明（直接 CloudEvents / mapping / raw+样本，注册器会回复建议映射）；`session.discriminator` = 你数据里当"会话/话题"用的字段（JSONPath），用于核心的上下文归属。
 
 ### 2.1a 汇报策略声明（report_policy，核心裁决的原料）
 
