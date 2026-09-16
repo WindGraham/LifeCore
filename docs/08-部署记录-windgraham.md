@@ -45,3 +45,9 @@ hermes-gateway.service（官方 --system --run-as-user root，Restart=always）
   - 通知队列/反馈、通道 CRUD+测试事件、cron 任务、设置（TTS 试听/能力清单/解绑）
 - 已知：`GET /v2/models` 经 api_server 返回 401（hermes 侧 auth 面差异，待用）
 - 安全提醒：MiniMax key 已在聊天中明文传输，建议尽快轮换
+
+### 访问控制（2026-09-16 增补）
+- `/console`、`/pair`、`/pair/*` 已加 nginx basic auth（用户 `lifecore`）
+- 密码存于服务器 `/etc/lifecore/env`（`CONSOLE_PASSWORD`），htpasswd 在 `/etc/nginx/.htpasswd-lifecore`（644，www-data 可读）
+- 注意：htpasswd 需 644（worker 以 www-data 读）；htpasswd 密码与 env 必须同一次生成（曾两次生成导致 401）
+- API（/v1 /v2 /hk）仍走设备凭证层，不受影响
