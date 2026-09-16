@@ -115,3 +115,10 @@ hermes-gateway.service（官方 --system --run-as-user root，Restart=always）
 - **client_secret.json 有时不被认**（0.22.5）：用 GOOGLE_WORKSPACE_CLI_CLIENT_ID/SECRET 环境变量最稳；token 落盘（credentials.enc）后普通调用不再需要这对 env。
 - 登录后 `gws drive files list` 实测通；桥四线程（commands+calendar+drive+tasks）心跳全 ok，gws_auth=true。
 - 账号 windgraham648@gmail.com，项目 lifecore-gws-648。
+
+## 10. hermes Dashboard 上线（2026-09-16）
+
+原生 Web UI 挂 `/console`（旧控制台移 `/lc`），systemd 常驻，nginx basic auth +
+上行 Bearer 注入。全部实测：SPA 前缀改写 / API 200 / 真实 WS 握手 CONNECTED。
+详见 `deploy/hermes-dashboard-接入记录.md`。
+状态注入升级为 `pre_llm_call` shell hook（覆盖 web UI 等所有对话面，与 BFF 双通道守卫互斥）。
