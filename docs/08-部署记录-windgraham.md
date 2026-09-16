@@ -83,3 +83,10 @@ hermes-gateway.service（官方 --system --run-as-user root，Restart=always）
 - `platform_toolsets` 瘦身：api_server/webhook 只留 [web, cronjob, skills, todo, clarify, tts]（砍 terminal/browser/execute_code/delegation 等执行类——与"核心只调度不执行"一致）
 - 效果：**新会话每轮 input 13851 → 7160 tokens（-48%）**，工具 23 → 10 个
 - 副作用注意：核心 agent 暂不能在 VPS 上跑 shell/浏览器（需要时改 toolsets 配置即恢复）
+
+### 非流式切换（2026-09-16，缓存最终解决）
+- `model.streaming: false`（agent_init 原生支持）→ hermes 全部走非流式
+- **抓包+重放实证**：hermes 实际请求体（stream=None，beta=interleaved-thinking）直接重放到 MiniMax → cache_read=6912/7168 满命中。**缓存一直都在，之前只是 hermes 的 usage 报表不显示 cache 字段**
+- 效果：每轮输入成本 ~7160 → ~200 token（**省 ~97%**）
+- 代价：控制台聊天失去打字机流式效果（回复一次性出现）；功能/质量无影响
+- 排障遗产：`model.streaming` 解析对 YAML bool 友好（str(False)="false"）；重启后立刻测会撞上 gateway 未就绪，等 10 秒
