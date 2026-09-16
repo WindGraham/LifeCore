@@ -14,6 +14,8 @@ LifeCore/
 │   ├── inbox/           ← 收件箱服务（CloudEvents 归一化 + since 增量同步 API）［待写］
 │   └── pairing-dr/      ← 配对与灾难恢复 sidecar（QR/密钥对/待恢复模式）［待写］
 ├── contracts/
+│   ├── agent.md         ← 对外自描述契约 v0.1（公开 URL 服务）
+│   └── edge-agent.md    ← 地方值守 agent 规范（值守循环/MEMORY.md/上报协议/回查义务）
 │   └── agent.md         ← 对外自描述契约（公开 URL 服务）［待写］
 └── docs/                ← 设计文档（01 总纲 / 02 对接层设计记录 / 03 Hermes构造分析）
 ```
