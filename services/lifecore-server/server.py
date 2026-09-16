@@ -109,6 +109,16 @@ def init_db() -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_notify_state ON notify_items(state);
     """)
+    # lists 表（六清单本体：user_state/running_items/schedule/...）
+    conn.execute("""CREATE TABLE IF NOT EXISTS lists(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      created_at REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      resolved INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(name, key))""")
     # 迁移：host 字段（哪台设备——接入服务清单的必需维度）
     try:
         conn.execute("ALTER TABLE channels ADD COLUMN host TEXT NOT NULL DEFAULT ''")
@@ -402,6 +412,47 @@ async def test_event(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> d
     conn.commit(); conn.close()
     return {"status": "injected", "seq": cur.lastrowid}
 
+# ── lists：清单读写（agent 走 MCP 工具 list_mcp.py；人/App 走这里）──
+@app.get("/v2/lists")
+def lists_all(name: str = "", dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    conn = db()
+    if name:
+        rows = conn.execute("SELECT * FROM lists WHERE name=? ORDER BY updated_at DESC", (name,)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM lists ORDER BY name, updated_at DESC").fetchall()
+    conn.close()
+    return {"lists": [{"list": r["name"], "key": r["key"], "value": json.loads(r["value_json"]),
+            "resolved": bool(r["resolved"]), "created_at": iso(r["created_at"]),
+            "updated_at": iso(r["updated_at"])} for r in rows]}
+
+@app.put("/v2/lists/{name}/items/{key}")
+def list_upsert(name: str, key: str, req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    body = req.scope.get("_json") or {}
+    value = body.get("value", "")
+    vj = json.dumps(value, ensure_ascii=False)
+    t = now()
+    conn = db()
+    conn.execute("""INSERT INTO lists(name,key,value_json,created_at,updated_at)
+                    VALUES(?,?,?,?,?)
+                    ON CONFLICT(name,key) DO UPDATE SET value_json=?, updated_at=?, resolved=0""",
+                 (name, key, vj, t, t, vj, t))
+    conn.commit(); conn.close()
+    return {"ok": True, "list": name, "key": key}
+
+@app.post("/v2/lists/{name}/items/{key}/resolve")
+def list_resolve(name: str, key: str, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    conn = db()
+    conn.execute("UPDATE lists SET resolved=1, updated_at=? WHERE name=? AND key=?", (now(), name, key))
+    conn.commit(); conn.close()
+    return {"ok": True, "resolved": f"{name}/{key}"}
+
+@app.delete("/v2/lists/{name}/items/{key}")
+def list_delete(name: str, key: str, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    conn = db()
+    conn.execute("DELETE FROM lists WHERE name=? AND key=?", (name, key))
+    conn.commit(); conn.close()
+    return {"ok": True, "deleted": f"{name}/{key}"}
+
 # ── BFF：App 面（docs/06 接口原则；seq 单调游标，断网重连自动补齐）──
 def notify_item_json(r: sqlite3.Row) -> dict:
     return {"id": r["id"], "event_seq": r["event_seq"], "channel_id": r["channel_id"],
@@ -671,28 +722,47 @@ async def cache_json(request: Request, call_next):
     return await call_next(request)
 
 # ── 每回合状态块（docs/02 §12.4：瞬时注入，位置=当前用户消息头部，缓存安全）──
+FULL_LISTS = ["user_state", "running_items", "schedule"]   # 全文注入的清单
+STATE_BUDGET = int(os.environ.get("LC_STATE_BUDGET", "2500"))  # 全文块字符预算
+
 def state_block(dev_name: str = "") -> str:
-    """紧凑实时状态（≤400字符）：注入到每条进核心 agent 的消息头部。"""
-    parts = []
+    """每回合注入块（全文模式）：[live] 实时行 + 各清单全文（新→旧）+ 服务投影。
+    位置=当前消息头部 → 提示词前缀缓存不受影响。"""
     try:
         conn = db()
         now_s = datetime.now(timezone.utc).astimezone().strftime("%m-%d %H:%M")
+        sections = []
+        parts = []
         act = conn.execute("SELECT id,summary FROM notify_items WHERE state='awaiting_feedback' ORDER BY id LIMIT 1").fetchone()
         qn = conn.execute("SELECT COUNT(*) c FROM notify_items WHERE state='queued'").fetchone()["c"]
         if act:
             parts.append(f"待决策:1({str(act['summary'] or '#'+str(act['id']))[:40]})")
         if qn:
             parts.append(f"队列:{qn}")
-        try:
-            rows = conn.execute("SELECT name,value_json,updated_at FROM lists WHERE name='user_state' ORDER BY updated_at DESC LIMIT 1").fetchone()
-            if rows:
-                parts.append(f"用户状态:{str(rows['value_json'])[:60]}")
-        except sqlite3.OperationalError:
-            pass  # lists 表未建（list_manager 未上线）
         ch = conn.execute("SELECT COUNT(*) c FROM channels WHERE revoked=0").fetchone()["c"]
         parts.append(f"通道:{ch}")
+        sections.append("[live " + now_s + "] " + " | ".join(parts))
+        # 清单全文（活跃条目，每张清单新→旧，各限 20 条）
+        for lname in FULL_LISTS:
+            rows = conn.execute("""SELECT key,value_json,updated_at FROM lists
+                                   WHERE name=? AND resolved=0 ORDER BY updated_at DESC LIMIT 20""",
+                                (lname,)).fetchall()
+            if not rows:
+                continue
+            lines = []
+            for r in rows:
+                ts = datetime.fromtimestamp(r["updated_at"], timezone.utc).astimezone().strftime("%m-%d %H:%M")
+                lines.append(f"  {r['key']}: {str(r['value_json'])[:120]} ({ts})")
+            sections.append(f"[{lname}]\n" + "\n".join(lines))
+        # 接入服务投影（注册表）
+        svcs = conn.execute("SELECT name,host FROM channels WHERE revoked=0 ORDER BY name LIMIT 30").fetchall()
+        if svcs:
+            sections.append("[services]\n" + "\n".join(f"  {r['name']} @ {r['host'] or '?'}" for r in svcs))
         conn.close()
-        return "[live " + now_s + "] " + " | ".join(parts)
+        block = "\n".join(sections)
+        if len(block) > STATE_BUDGET:
+            block = block[:STATE_BUDGET] + "\n…(截断)"
+        return block
     except Exception:
         return ""
 
