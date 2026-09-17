@@ -350,6 +350,12 @@ def delete_channel(ch_id: str, dev: sqlite3.Row = Depends(auth_device)) -> dict:
     return {"revoked": True, "hermes_remove_rc": proc.returncode}
 
 # ── 数据面：HMAC 验签上行（agent.md §2.2）+ 留档 + 转发 + notify 入队 ──
+def hmac_sign(secret: str, body: bytes) -> dict[str, str]:
+    """HMAC V2 签名（ingest 规范化转发时用；与 agent.md §2.2 同式）。"""
+    ts = str(int(now()))
+    sig = hmac_mod.new(secret.encode(), ts.encode() + b"." + body, hashlib.sha256).hexdigest()
+    return {"X-Webhook-Signature-V2": sig, "X-Webhook-Timestamp": ts}
+
 def verify_sig(secret: str, body: bytes, headers) -> None:
     sig = headers.get("x-webhook-signature-v2", "")
     ts = headers.get("x-webhook-timestamp", "")
@@ -413,10 +419,18 @@ async def ingest(ch_id: str, request: Request) -> dict:
     enqueue_notify(conn, ch, payload if isinstance(payload, dict) else {}, seq)
     conn.commit()
     # 转发 hermes（agent.md §2.2 同源签名；hermes 复验后按 route 规则处理）
+    # 规范化：发送方若用 ensure_ascii=True（报文里全是 \uXXXX），重序列化为可读 UTF-8
+    # 再用同一通道密钥重签——hermes 复验照旧通过，核心 agent 不再脑内解码。
+    fwd_body, fwd_ts, fwd_sig = body, request.headers.get("x-webhook-timestamp", ""), \
+        request.headers.get("x-webhook-signature-v2", "")
+    if isinstance(payload, dict):
+        norm = json.dumps(payload, ensure_ascii=False).encode()
+        if norm != body:
+            fwd_body = norm
+            hdrs = hmac_sign(ch["secret"], norm)
+            fwd_ts, fwd_sig = hdrs["X-Webhook-Timestamp"], hdrs["X-Webhook-Signature-V2"]
     status, text = await forward_to_hermes(
-        ch["route_name"], body,
-        request.headers.get("x-webhook-timestamp", ""),
-        request.headers.get("x-webhook-signature-v2", ""),
+        ch["route_name"], fwd_body, fwd_ts, fwd_sig,
         request.headers.get("x-request-id"))
     conn.execute("UPDATE events SET upstream_status=? WHERE seq=?", (f"{status}:{text[:200]}", seq))
     conn.commit(); conn.close()
