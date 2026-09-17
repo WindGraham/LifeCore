@@ -207,7 +207,7 @@ class ChatActivity : AppCompatActivity() {
             when (h) {
                 is UserVH -> h.content.text = m.text
                 is AiVH -> {
-                    h.content.text = m.text
+                    Md.apply(h.content, m.text)
                     h.speakBtn.setOnClickListener { speak(m.text) }
                 }
                 is ToolVH -> h.content.text = m.text
