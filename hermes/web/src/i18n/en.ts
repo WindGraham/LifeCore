@@ -1,6 +1,8 @@
 import type { Translations } from "./types";
+import { enLc } from "./lifecore";
 
 export const en: Translations = {
+  lifecore: enLc,
   common: {
     save: "Save",
     saving: "Saving...",

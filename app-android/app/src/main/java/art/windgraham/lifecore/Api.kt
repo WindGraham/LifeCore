@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
+import android.util.TypedValue
 import android.widget.Toast
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -11,16 +12,20 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** BFF 客户端：App 只跟 BFF 说话（docs/06 接口原则），token/baseUrl 存本地。 */
+/**
+ * BFF client (App only talks to BFF /v2). See docs/06.
+ */
 object Api {
     private lateinit var prefs: SharedPreferences
     private val main = Handler(Looper.getMainLooper())
-    val client = OkHttpClient.Builder()
+
+    val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(180, TimeUnit.SECONDS)
-        .pingInterval(20, TimeUnit.SECONDS)   // WS 心跳（契约 §2：pingInterval 20s）
+        .pingInterval(20, TimeUnit.SECONDS)
         .build()
 
     fun init(ctx: Context) {
@@ -39,23 +44,32 @@ object Api {
         get() = prefs.getString("fingerprint", null)
         private set(v) = prefs.edit().putString("fingerprint", v).apply()
 
+    var lastSpokenId: Int
+        get() = prefs.getInt("last_spoken_id", 0)
+        set(v) { prefs.edit().putInt("last_spoken_id", v).apply() }
+
     fun savePair(deviceToken: String, fp: String) {
-        token = deviceToken; fingerprint = fp
+        token = deviceToken
+        fingerprint = fp
     }
 
-    fun logout() = prefs.edit().remove("device_token").apply()
+    fun logout() {
+        prefs.edit()
+            .remove("device_token")
+            .remove("fingerprint")
+            .apply()
+    }
 
-    /** http(s) base → ws(s)，拼 WS 握手地址（契约 §2：query token 鉴权）。 */
     fun wsUrl(path: String): String =
         baseUrl.replaceFirst(Regex("^http"), "ws") + path
 
-    /** 线程收件箱（契约 §1 GET /v2/notify/threads，新→旧）。 */
+    fun me(): JSONObject = getJson("/v2/me")
+    fun gatewayCapabilities(): JSONObject = getJson("/v2/gateway/capabilities")
+    fun stateBlock(): JSONObject = getJson("/v2/state-block")
+    fun notifyActive(): JSONObject = getJson("/v2/notify/active")
     fun notifyThreads(): JSONObject = getJson("/v2/notify/threads")
-
-    /** 线程时间线（契约 §1 GET /v2/notify/threads/{tid}/items，旧→新）。 */
     fun notifyThreadItems(tid: Int): JSONObject = getJson("/v2/notify/threads/$tid/items")
 
-    /** 决议回执（契约 §1 POST /v2/notify/items/{id}/feedback）。 */
     fun notifyFeedback(id: Int, action: String, minutes: Int? = null, until: Long? = null): JSONObject {
         val b = JSONObject().put("action", action)
         minutes?.let { b.put("minutes", it) }
@@ -63,7 +77,59 @@ object Api {
         return postJson("/v2/notify/items/$id/feedback", b)
     }
 
-    /** unix 秒 → "MM-dd HH:mm"；空值返回空串。 */
+    fun sessions(q: String = ""): JSONObject =
+        getJson("/v2/sessions" + if (q.isNotBlank()) "?q=" + q else "")
+
+    fun sessionCreate(title: String): JSONObject =
+        postJson("/v2/sessions", JSONObject().put("title", title))
+
+    fun sessionMessages(sid: String): JSONObject = getJson("/v2/sessions/$sid/messages")
+
+    fun sessionChat(sid: String, message: String): JSONObject =
+        postJson("/v2/sessions/$sid/chat", JSONObject().put("message", message))
+
+    fun sessionRename(sid: String, title: String): JSONObject =
+        callJson("PATCH", "/v2/sessions/$sid", JSONObject().put("title", title))
+
+    fun sessionDelete(sid: String) {
+        call("DELETE", "/v2/sessions/$sid")
+    }
+
+    fun jobs(): JSONObject = getJson("/v2/jobs")
+
+    fun jobCreate(name: String, schedule: String, prompt: String): JSONObject =
+        postJson("/v2/jobs", JSONObject()
+            .put("name", name).put("schedule", schedule).put("prompt", prompt))
+
+    fun jobAction(jid: String, action: String): JSONObject =
+        postJson("/v2/jobs/$jid/$action", JSONObject())
+
+    fun jobDelete(jid: String) {
+        call("DELETE", "/v2/jobs/$jid")
+    }
+
+    fun channels(): JSONObject = getJson("/v1/channels")
+
+    fun channelCreate(name: String, archetype: String, uplink: String, mode: String): JSONObject =
+        postJson("/v1/channels", JSONObject()
+            .put("name", name)
+            .put("archetype", archetype)
+            .put("uplink_level", uplink)
+            .put("report_policy", JSONObject().put("mode", mode)))
+
+    fun channelDelete(channelId: String) {
+        call("DELETE", "/v1/channels/$channelId")
+    }
+
+    fun gatewayStatus(): JSONObject = getJson("/v2/gateway/status")
+    fun adminConfig(): JSONObject = getJson("/v2/admin/config")
+
+    fun adminConfigPut(config: JSONObject): JSONObject =
+        callJson("PUT", "/v2/admin/config", JSONObject().put("config", config))
+
+    fun adminMcp(): JSONObject = getJson("/v2/admin/mcp")
+    fun voices(): JSONObject = getJson("/v2/voices")
+
     fun fmtTs(unix: Double?): String {
         if (unix == null || unix <= 0) return ""
         return try {
@@ -73,14 +139,12 @@ object Api {
         } catch (_: Exception) { "" }
     }
 
-    /** 主题属性取色（深色模式友好：全部走 ?attr，禁硬编码色值）。 */
     fun themeColor(ctx: Context, attr: Int): Int {
-        val tv = android.util.TypedValue()
+        val tv = TypedValue()
         ctx.theme.resolveAttribute(attr, tv, true)
         return tv.data
     }
 
-    /** ISO 时间 → "MM-dd HH:mm"；解析失败截断原样返回。 */
     fun fmtTime(iso: String?): String {
         if (iso.isNullOrBlank()) return ""
         return try {
@@ -97,7 +161,19 @@ object Api {
         }
     }
 
-    /** 同步调用；必须在后台线程。返回 (httpCode, bodyString)。 */
+    fun parseIso(iso: String?): Long {
+        if (iso.isNullOrBlank()) return 0
+        return try {
+            val fixed = when {
+                iso.endsWith("Z") -> iso
+                iso.matches(Regex(".*[+-]\\d\\d:?\\d\\d$")) -> iso
+                else -> iso + "Z"
+            }
+            java.time.OffsetDateTime.parse(fixed).toInstant().epochSecond
+        } catch (_: Exception) { 0 }
+    }
+
+    /** sync call; returns (code, body). MUST be on background thread. */
     fun call(method: String, path: String, body: JSONObject? = null, raw: ByteArray? = null,
              contentType: String? = null, withAuth: Boolean = true): Pair<Int, String> {
         val url = baseUrl + path
@@ -109,18 +185,36 @@ object Api {
         }
         val b = Request.Builder().url(url).method(method, reqBody)
         if (withAuth && token != null) b.header("Authorization", "Bearer $token")
-        val resp = client.newCall(b.build()).execute()
-        return resp.code to (resp.body?.string() ?: "")
+        try {
+            client.newCall(b.build()).execute().use { resp ->
+                return resp.code to (resp.body?.string() ?: "")
+            }
+        } catch (e: IOException) {
+            throw ApiException(0, "network: ${e.message ?: "unreachable"}")
+        }
     }
 
-    /** 二进制安全调用（TTS 音频等）。 */
-    fun callBytes(method: String, path: String, body: JSONObject? = null): Pair<Int, ByteArray> {
-        val reqBody = body?.toString()?.toRequestBody("application/json; charset=utf-8".toMediaType())
+    fun callBytes(method: String, path: String, body: JSONObject? = null,
+                  contentType: String = "application/json; charset=utf-8"): Pair<Int, ByteArray> {
+        val reqBody = body?.toString()?.toRequestBody(contentType.toMediaType())
         val b = Request.Builder().url(baseUrl + path).method(method, reqBody)
         if (token != null) b.header("Authorization", "Bearer $token")
-        client.newCall(b.build()).execute().use { resp ->
-            return resp.code to (resp.body?.bytes() ?: ByteArray(0))
+        try {
+            client.newCall(b.build()).execute().use { resp ->
+                return resp.code to (resp.body?.bytes() ?: ByteArray(0))
+            }
+        } catch (e: IOException) {
+            throw ApiException(0, "network: ${e.message ?: "unreachable"}")
         }
+    }
+
+    fun callStream(method: String, path: String, body: JSONObject?): okhttp3.Response {
+        val url = baseUrl + path
+        val rb = body?.toString()?.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val b = Request.Builder().url(url).method(method, rb)
+        if (token != null) b.header("Authorization", "Bearer $token")
+        b.header("Accept", "text/event-stream")
+        return client.newCall(b.build()).execute()
     }
 
     fun getJson(path: String): JSONObject {
@@ -135,14 +229,19 @@ object Api {
         return if (text.isBlank()) JSONObject() else JSONObject(text)
     }
 
+    fun callJson(method: String, path: String, body: JSONObject? = null): JSONObject {
+        val (code, text) = call(method, path, body = body)
+        if (code !in 200..299) throw ApiException(code, text)
+        return if (text.isBlank()) JSONObject() else JSONObject(text)
+    }
+
     class ApiException(val code: Int, val body: String) : Exception("HTTP $code")
 
     fun errText(e: Exception): String = when (e) {
-        is ApiException -> "HTTP ${e.code}: ${e.body.take(200)}"
+        is ApiException -> if (e.code == 0) e.body else "HTTP ${e.code}: ${e.body.take(200)}"
         else -> e.javaClass.simpleName + ": " + (e.message ?: "")
     }
 
-    /** 后台执行 + 主线程回调；自动 toast 错误。 */
     fun bg(ctx: Context, work: () -> Unit) {
         Thread {
             try {
@@ -153,9 +252,18 @@ object Api {
         }.start()
     }
 
+    fun bgSilent(work: () -> Unit, onError: ((Exception) -> Unit)? = null) {
+        Thread {
+            try {
+                work()
+            } catch (e: Exception) {
+                onError?.invoke(e)
+            }
+        }.start()
+    }
+
     fun ui(block: () -> Unit) = main.post(block)
 
-    // ── 防御性 JSON 小工具 ──
     fun arr(o: JSONObject, key: String): JSONArray = o.optJSONArray(key) ?: JSONArray()
     fun jarr(text: String): JSONArray =
         if (text.trimStart().startsWith("[")) JSONArray(text) else JSONArray()

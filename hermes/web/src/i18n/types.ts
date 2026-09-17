@@ -896,4 +896,10 @@ export interface Translations {
       confirmManyTitle?: string;
     };
   };
+
+  // ── LifeCore (optional) ──
+  // Defined in web/src/i18n/lifecore.ts and merged into en.ts / zh.ts.
+  // Other locales don't define it — components must guard with optional
+  // chaining (e.g. `t.lifecore?.pair?.title ?? "Pair"`).
+  lifecore?: import("./lifecore").LifecoreTranslations;
 }

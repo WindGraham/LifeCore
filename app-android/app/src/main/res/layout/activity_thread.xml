@@ -4,11 +4,11 @@
     android:orientation="vertical">
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:background="?attr/colorSurface" android:title="事项线程"
+        android:background="?attr/colorSurface" android:title="@string/title_thread"
         android:navigationIcon="?attr/homeAsUpIndicator" android:titleTextColor="?attr/colorOnSurface" />
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/threadRv" android:layout_width="match_parent" android:layout_height="0dp"
-        android:layout_weight="1" android:paddingTop="8dp" />
+        android:layout_weight="1" android:paddingTop="8dp" android:clipToPadding="false" />
     <LinearLayout android:id="@+id/optBar" android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal" android:padding="12dp"
         android:background="?attr/colorSurface" android:visibility="gone" />

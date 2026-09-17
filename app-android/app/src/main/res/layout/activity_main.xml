@@ -1,14 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent" android:layout_height="match_parent"
-    android:orientation="vertical">
-    <com.google.android.material.appbar.MaterialToolbar
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        app:title="LifeCore" app:titleCentered="false" />
-    <FrameLayout android:id="@+id/container"
-        android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
-    <com.google.android.material.bottomnavigation.BottomNavigationView
-        android:id="@+id/bottomNav" android:layout_width="match_parent" android:layout_height="wrap_content"
-        app:menu="@menu/bottom_nav" />
-</LinearLayout>
+    android:id="@+id/drawer"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+
+    <!-- 主内容 -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
+        android:orientation="vertical">
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            app:title="LifeCore"
+            app:titleCentered="false"
+            app:menu="@menu/top_bar"
+            android:background="?attr/colorSurface" />
+        <FrameLayout android:id="@+id/container"
+            android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+    </LinearLayout>
+
+    <!-- 抽屉：导航条目 -->
+    <com.google.android.material.navigation.NavigationView
+        android:id="@+id/navView"
+        android:layout_width="wrap_content" android:layout_height="match_parent"
+        android:layout_gravity="start"
+        app:menu="@menu/drawer_nav"
+        app:headerLayout="@layout/drawer_header" />
+</androidx.drawerlayout.widget.DrawerLayout>

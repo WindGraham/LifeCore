@@ -1,9 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">LifeCore</string>
-    <string name="nav_sessions">对话</string>
+    <string name="drawer_subtitle">智能助理 App</string>
+
+    <!-- 抽屉 / 顶栏 -->
+    <string name="nav_open_drawer">打开抽屉</string>
+    <string name="nav_close_drawer">关闭抽屉</string>
+    <string name="nav_today">今日</string>
     <string name="nav_notify">通知</string>
+    <string name="nav_sessions">对话</string>
     <string name="nav_channels">通道</string>
     <string name="nav_jobs">任务</string>
     <string name="nav_settings">设置</string>
+
+    <!-- 顶栏菜单 -->
+    <string name="menu_notify">通知</string>
+
+    <!-- 标题 -->
+    <string name="title_today">今日</string>
+    <string name="title_notify">通知</string>
+    <string name="title_channels">通道</string>
+    <string name="title_jobs">任务</string>
+    <string name="title_settings">设置</string>
+    <string name="title_thread">事项线程</string>
+
+    <!-- 通知页 -->
+    <string name="btn_autoplay_on">⏹ 停止自动播报</string>
+    <string name="btn_autoplay_off">▶ 开启自动播报（App 存活期自动朗读）</string>
+    <string name="section_threads">事项线程（按议题聚合）</string>
+
+    <!-- 设置页 -->
+    <string name="sec_server">服务器地址</string>
+    <string name="hint_base_url">https://windgraham.art</string>
+    <string name="btn_save">保存</string>
+    <string name="sec_tts">语音（TTS）</string>
+    <string name="btn_tts_test">试听一段话</string>
+    <string name="sec_admin">网关配置（白名单）</string>
+    <string name="btn_admin_config">编辑原始 JSON</string>
+    <string name="btn_admin_mcp">管理 MCP server</string>
+    <string name="btn_admin_ch_override">频道级 prompt 覆盖</string>
+    <string name="btn_unpair">解除配对</string>
+    <string name="unpaired_title">未配对</string>
+    <string name="unpaired_desc">用 LifeCore App 扫码；扫描完成后此页会自动激活。</string>
+    <string name="btn_pair_now">现在配对</string>
 </resources>

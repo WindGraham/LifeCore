@@ -118,3 +118,66 @@
 2. **"今日"主页面你接受为 M1 方向吗？**（替代 5 等分底栏是 UX 大改）
 3. **主动行为愿意从 T1（纯后台 L1）开始吗？** 14 天后无感知数据再决定上不上 T2
 4. **跨通道主题收敛 B7 的语义判定**要不要先用一个轻量关键词+嵌入相似度（资源<LLM 一次）的方案兜底，等长程记忆起来再升级？
+
+---
+
+## 9. 实施落点（2026-09-17）
+
+> 同一日内全部产出落地清单，与 docs/16/17/19 一并构成 P1+P2 的物理证据。
+
+### 9.1 Prompt 套件（核心 agent + 主动行为调度器）
+
+- `prompts/core-agent/`（9 文件）：
+  - `system.md` — 核心 agent 总入口 prompt
+  - `memory_working.md` — 工作记忆（per-turn）
+  - `memory_contextual.md` — 上下文记忆（per-thread）
+  - `memory_longterm.md` — 长期记忆（per-user）
+  - `proactive_trigger.md` — 主动行为触发判定的 agent 侧 prompt
+  - `feedback_loop.md` — 反馈闭环（👍/👎/⏰/矫正文本）
+  - `subagent_dispatch.md` — 子 agent 派遣（MCP / google-bridge / cron）
+  - `thread_continuity.md` — 线程续命（同 thread_id 复用）
+  - `README.md` — 套件索引
+- `prompts/proactive/`（14 文件 + schema.sql）：
+  - 4 层行为分级：`L1_signal_collection.md` / `L2_status_report.md` / `L3_decision_request.md` / `L4_autonomous_execute.md`
+  - 7 个行为触发：`B1_inbox_summary.md` / `B2_calendar_prep.md` / `B3_relationship_nudge.md` / `B4_routine_check.md` / `B5_followup_tracker.md` / `B6_proactive_suggest.md` / `B7_cross_channel_dedup.md`
+  - 机制：`trigger_decision.md` / `kill_switch.md` / `feedback_interpret.md`
+  - `README.md`（索引）+ `schema.sql`（5 表 + 1 view + seed，本次部署**不生效**，等下迭代注入 `init_db()`）
+
+### 9.2 调研/规范文档
+
+- `docs/16-hermes-UI规范.md` — Hermes 控制台 UI 规范（设计语言、组件、状态、a11y）
+- `docs/17-hermes-页面模板.md` — Hermes 8 个页面的实现模板（Pair/Today/Chat/Notify/Channels/Jobs/Settings/index）
+
+### 9.3 Hermes Web SPA（LC 私有 fork，路径 `/usr/local/lib/hermes-agent/web/`）
+
+- `hermes/web/src/pages/lifecore/`（8 文件）：`index.tsx`（根重定向）+ `PairPage.tsx` / `TodayPage.tsx` / `ChatPage.tsx` / `NotifyPage.tsx` / `ChannelsPage.tsx` / `JobsPage.tsx` / `SettingsPage.tsx`
+- `hermes/web/src/lib/lifecore-api.ts` + `hermes/web/src/lib/lifecore-pair-store.ts`
+- `hermes/web/src/hooks/useVoiceConsent.ts`
+- `hermes/web/src/components/lifecore/VoiceConsentBanner.tsx`
+- `hermes/web/src/i18n/lifecore.ts`
+- 接入：`hermes/web/src/App.tsx`（7 lazy imports + 7 routes + 6 nav + 根重定向）、`hermes/web/src/i18n/types.ts` + `en.ts` + `zh.ts`（lifecore 段扩 keys）
+
+### 9.4 Android App（Pixel Android 17，APK 6.8 MB debug）
+
+- 15 Kotlin：`Api.kt` / `BootReceiver.kt` / `ChatActivity.kt` / `FeedbackReceiver.kt` / `MainActivity.kt` / `Md.kt` / `PairStore.kt` / `PlayService.kt` / `ThreadDetailActivity.kt` + 5 个 `ui/<sub>/*Fragment.kt`（channels/jobs/notify/settings/today）
+- 14 XML：`drawer_header.xml` / `activity_chat.xml` / `activity_main.xml` / `activity_pair.xml` / `activity_thread.xml` / `fragment_list.xml` / `fragment_notify.xml` / `fragment_settings.xml` / `fragment_today.xml` / `item_channel.xml` / `item_digest.xml` / `item_job.xml` + `drawer_nav.xml`（menu）+ `top_bar.xml`（menu）
+- 重写要点：DrawerLayout 替代底栏 + PairStore（SharedPreferences token+fp 持久化）+ WS 单连接 + 单调 `lastSpokenId`（SharedPreferences）根治重启回放与空 active 清 guard 重播
+
+### 9.5 后端 + 部署
+
+- `deploy/nginx-lc-redirect.conf` — 旧 `/lc*` → `/console/lc-today` 301（4 行 location 块）
+- `services/lifecore-server/static/console.html` — **删除**（-370 行，迁至 hermes SPA）
+- `services/lifecore-server/server.py` — 移除 `/console` 端点（-9 行），保持数据 schema 不变
+
+### 9.6 B4 实施偏离说明
+
+> **修正**：2026-09-17 B4 实施为 L2/silent（详见 `prompts/proactive/B4_routine_check.md` §3/§7 + `prompts/proactive/README.md` §3.2）。
+
+`docs/13 §6` 原描述 B3 — 习惯性回避反思为 **L3 干预**（"用户开 thread 时首行显示"），实际 `prompts/proactive/B4_routine_check.md` 落地时按以下偏离执行：
+
+1. **层级下调**：L3 → L2，且 `enqueue_mode='silent'`（**绝对不入队、不写 notify_items、不调 promote_notify**），仅写 `user_state.thread_meta/<tid>/avoidance_flag` + 改 `notify_threads.title` 前缀为 `⚠️ 习惯性回避 → `。
+2. **触发时机**：等用户**主动打开**该 thread 时才在首行显示反思提示（`shown_to_user` 字段置 true）。
+3. **灰度阶段**：T2 谨慎（不是 T3 完全）。
+4. **不打扰红线**：每 thread 7 天最多 1 次；问题必须具体可操作（"你还好吗" → failure）。
+
+依据：`prompts/proactive/B4_routine_check.md §7` 与 docs/13 §1 信条"沉默观察"一致，且避免 thread 标题前缀变化影响 L2 同 thread 续命逻辑（只改 title 不改 thread_id）。

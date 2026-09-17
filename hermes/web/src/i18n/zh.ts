@@ -1,6 +1,8 @@
 import type { Translations } from "./types";
+import { zhLc } from "./lifecore";
 
 export const zh: Translations = {
+  lifecore: zhLc,
   common: {
     save: "保存",
     saving: "保存中...",

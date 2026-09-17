@@ -1,25 +1,86 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.swiperefreshlayout.widget.SwipeRefreshLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/swipe" android:layout_width="match_parent" android:layout_height="match_parent">
     <ScrollView android:layout_width="match_parent" android:layout_height="match_parent" android:padding="16dp">
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
-            <TextView android:id="@+id/gwStatus" android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:textSize="14sp" android:lineSpacingMultiplier="1.3" android:layout_marginBottom="8dp" />
-            <TextView android:id="@+id/deviceInfo" android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:textSize="13sp" android:textColor="#888" android:layout_marginBottom="16dp" />
-            <EditText android:id="@+id/baseUrlInput" android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:hint="服务器地址" android:inputType="textUri" />
+
+        <!-- 已配对时显示 -->
+        <LinearLayout android:id="@+id/pairedArea"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView android:id="@+id/gwStatus"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="13sp" android:fontFamily="monospace"
+                android:padding="10dp" android:textIsSelectable="true"
+                android:background="?attr/colorSurfaceVariant"
+                android:layout_marginBottom="10dp" />
+            <TextView android:id="@+id/deviceInfo"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="13sp"
+                android:layout_marginBottom="16dp" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/sec_server" android:textStyle="bold"
+                android:layout_marginBottom="6dp" />
+            <EditText android:id="@+id/baseUrlInput"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:hint="@string/hint_base_url" android:inputType="textUri" />
             <com.google.android.material.button.MaterialButton android:id="@+id/btnSaveUrl"
-                android:layout_width="match_parent" android:layout_height="wrap_content" android:text="保存地址" android:layout_marginBottom="8dp" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/btnChOverride"
-                android:layout_width="match_parent" android:layout_height="wrap_content" android:text="频道级 prompt / 回复意向" android:layout_marginBottom="8dp" />
-            <com.google.android.material.button.MaterialButton android:id="@+id/btnEditMcp"
-                android:layout_width="match_parent" android:layout_height="wrap_content" android:text="MCP 能力管理" android:layout_marginBottom="8dp" />
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_gravity="end" android:text="@string/btn_save" android:layout_marginBottom="20dp" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/sec_tts" android:textStyle="bold"
+                android:layout_marginBottom="6dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/btnTtsTest"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/btn_tts_test"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_marginBottom="20dp" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/sec_admin" android:textStyle="bold"
+                android:layout_marginBottom="6dp" />
             <com.google.android.material.button.MaterialButton android:id="@+id/btnEditConfig"
-                android:layout_width="match_parent" android:layout_height="wrap_content" android:text="网关配置（高级 JSON）" android:layout_marginBottom="8dp" />
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/btn_admin_config"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_marginBottom="6dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/btnEditMcp"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/btn_admin_mcp"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_marginBottom="6dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/btnChOverride"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/btn_admin_ch_override"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_marginBottom="20dp" />
+
             <com.google.android.material.button.MaterialButton android:id="@+id/btnLogout"
-                android:layout_width="match_parent" android:layout_height="wrap_content" android:text="退出登录"
-                style="@style/Widget.Material3.Button.OutlinedButton" />
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/btn_unpair"
+                style="@style/Widget.Material3.Button.TonalButton" />
         </LinearLayout>
+
+        <!-- 未配对时显示（设计原则 6） -->
+        <LinearLayout android:id="@+id/unpairedArea"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:gravity="center_horizontal"
+            android:padding="40dp" android:visibility="gone">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="🔒" android:textSize="56sp" android:layout_marginBottom="12dp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/unpaired_title" android:textSize="18sp" android:textStyle="bold"
+                android:layout_marginBottom="8dp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/unpaired_desc"
+                android:gravity="center"
+                android:layout_marginBottom="16dp" />
+            <com.google.android.material.button.MaterialButton android:id="@+id/btnGoPair"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/btn_pair_now" />
+        </LinearLayout>
+
     </ScrollView>
 </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>

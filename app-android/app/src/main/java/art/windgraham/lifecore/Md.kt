@@ -13,8 +13,10 @@ import android.text.style.URLSpan
 import android.util.TypedValue
 import android.widget.TextView
 
-/** 轻量 markdown → Spanned：标题/加粗/斜体/行内代码/围栏代码块/列表/引用/链接/表格。
- *  模型输出的常见构造全覆盖，零第三方依赖。 */
+/**
+ * 轻量 markdown → Spanned：标题/加粗/斜体/行内代码/围栏代码块/列表/引用/链接/表格。
+ * 模型输出的常见构造全覆盖，零第三方依赖。
+ */
 object Md {
     private val INLINE = Regex(
         """(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(__[^_\n]+__)|(\[[^\]\n]+\]\([^)\n]+\))"""

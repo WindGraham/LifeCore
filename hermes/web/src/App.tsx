@@ -96,6 +96,19 @@ const ChannelsPage = lazy(() => import("@/pages/ChannelsPage"));
 const WebhooksPage = lazy(() => import("@/pages/WebhooksPage"));
 const SystemPage = lazy(() => import("@/pages/SystemPage"));
 const ChatPage = lazy(() => import("@/pages/ChatPage"));
+// LifeCore surfaces — see web/src/pages/lifecore/*.tsx and docs/16, docs/17.
+// Routes below mount these at /lc-* (rendered under /console/lc-* when the
+// SPA is reverse-proxied via X-Forwarded-Prefix). PairPage intentionally
+// not in BUILTIN_NAV_REST — pairing is reached via the root redirect when
+// no pair-store entry exists.
+const LifecoreIndex = lazy(() => import("@/pages/lifecore/index"));
+const LcPairPage = lazy(() => import("@/pages/lifecore/PairPage"));
+const LcTodayPage = lazy(() => import("@/pages/lifecore/TodayPage"));
+const LcChatPage = lazy(() => import("@/pages/lifecore/ChatPage"));
+const LcNotifyPage = lazy(() => import("@/pages/lifecore/NotifyPage"));
+const LcChannelsPage = lazy(() => import("@/pages/lifecore/ChannelsPage"));
+const LcJobsPage = lazy(() => import("@/pages/lifecore/JobsPage"));
+const LcSettingsPage = lazy(() => import("@/pages/lifecore/SettingsPage"));
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -155,7 +168,11 @@ const CHAT_NAV_ITEM: NavItem = {
  * keep working.
  */
 const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
-  "/": RootRedirect,
+  // Root redirect for /console deployment: client-side pair check → lc-pair
+  // or lc-today. Hermes dev (`npm run dev` → http://localhost:5173) also
+  // goes through LifecoreIndex; the user simply hasn't paired yet, so the
+  // navigate() lands them on /lc-pair.
+  "/": LifecoreIndex,
   "/sessions": SessionsPage,
   "/files": FilesPage,
   "/analytics": AnalyticsPage,
@@ -174,6 +191,15 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/config": ConfigPage,
   "/env": EnvPage,
   "/docs": DocsPage,
+  // LifeCore surfaces — /lc-* at SPA root (becomes /console/lc-* when
+  // reverse-proxied via X-Forwarded-Prefix: /console).
+  "/lc-pair": LcPairPage,
+  "/lc-today": LcTodayPage,
+  "/lc-chat": LcChatPage,
+  "/lc-notify": LcNotifyPage,
+  "/lc-channels": LcChannelsPage,
+  "/lc-jobs": LcJobsPage,
+  "/lc-settings": LcSettingsPage,
 };
 
 // Route placeholder for /chat.  The persistent ChatPage host (rendered
@@ -185,6 +211,39 @@ function ChatRouteSink() {
 }
 
 const BUILTIN_NAV_REST: NavItem[] = [
+  // ── LifeCore surfaces (rendered under /console/lc-* in production) ──
+  // PairPage is intentionally omitted — pairing is reached via root
+  // redirect when no pair-store entry exists (LifecoreIndex).
+  {
+    path: "/lc-today",
+    label: "LifeCore · Today",
+    icon: Sparkles,
+  },
+  {
+    path: "/lc-chat",
+    label: "LifeCore · Chat",
+    icon: MessageSquare,
+  },
+  {
+    path: "/lc-notify",
+    label: "LifeCore · Decisions",
+    icon: Zap,
+  },
+  {
+    path: "/lc-channels",
+    label: "LifeCore · Channels",
+    icon: Database,
+  },
+  {
+    path: "/lc-jobs",
+    label: "LifeCore · Jobs",
+    icon: Clock,
+  },
+  {
+    path: "/lc-settings",
+    label: "LifeCore · Settings",
+    icon: ShieldCheck,
+  },
   {
     path: "/sessions",
     labelKey: "sessions",
@@ -241,6 +300,7 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   Globe,
   Database,
   Shield,
+  ShieldCheck,
   Users,
   Wrench,
   Zap,

@@ -1293,13 +1293,10 @@ async def v2_session_chat_stream(sid: str, req: Request, dev: sqlite3.Row = Depe
     return StreamingResponse(upstream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-# ── Web 控制台（全功能parity，免安装测试）──
-@app.get("/console", response_class=HTMLResponse)
-def console_page() -> str:
-    f = STATIC_DIR / "console.html"
-    if f.exists():
-        return f.read_text(encoding="utf-8")
-    raise HTTPException(404, "console not deployed")
+# Note: the legacy /console endpoint (which served static/console.html) was
+# removed in the LifeCore dashboard rewrite. The SPA UI is now served by
+# the Hermes dashboard under /console/lc-*. See deploy/nginx-lc-redirect.conf
+# for the legacy /lc → /console/lc-today redirect.
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)  # root 无 handler 时 INFO 会被吞（lastResort 只收 WARNING+）
