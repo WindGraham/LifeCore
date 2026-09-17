@@ -61,8 +61,10 @@ class SessionsFragment : Fragment() {
     }
 }
 
-/** 通知页：待决策卡片（单活动锁）+ 队列（docs/02 §14）。 */
+/** 通知页 = 线程收件箱（按议题聚合）+ 自动播报开关 + 当前待决策卡片（docs/10 §1）。 */
 class NotifyFragment : Fragment() {
+    private val threads = mutableListOf<JSONObject>()
+
     override fun onCreateView(i: LayoutInflater, c: ViewGroup?, s: Bundle?): View {
         val v = i.inflate(R.layout.fragment_notify, c, false)
         val swipe = v.findViewById<SwipeRefreshLayout>(R.id.swipe)
@@ -93,6 +95,48 @@ class NotifyFragment : Fragment() {
         }
         val card = v.findViewById<View>(R.id.activeCard)
         val queueTv = v.findViewById<TextView>(R.id.queueList)
+
+        // ── 线程收件箱：标题 + 代际角标 + 末次决议 chip + updated_at ──
+        val seenPref = requireContext().getSharedPreferences("lifecore", android.content.Context.MODE_PRIVATE)
+        val threadsRv = v.findViewById<RecyclerView>(R.id.threadsRv)
+        val threadAdapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+            override fun getItemCount() = threads.size
+            override fun onCreateViewHolder(p: ViewGroup, t: Int) = object :
+                RecyclerView.ViewHolder(LayoutInflater.from(p.context).inflate(R.layout.item_thread, p, false)) {}
+            override fun onBindViewHolder(h: RecyclerView.ViewHolder, pos: Int) {
+                val o = threads[pos]
+                val tid = o.getInt("id")
+                val gen = o.optInt("item_count", 1)
+                val title = h.itemView.findViewById<TextView>(R.id.threadTitle)
+                title.text = o.optString("title", "事项 #$tid")
+                val seen = seenPref.getInt("seen_gen_$tid", 0)
+                val fresh = gen > seen                       // 代际增加 → 未读高亮
+                title.setTextColor(Api.themeColor(requireContext(),
+                    if (fresh) com.google.android.material.R.attr.colorPrimary else com.google.android.material.R.attr.colorOnSurface))
+                title.text = title.text.toString() + if (fresh) "  ●" else ""
+                h.itemView.findViewById<TextView>(R.id.threadBadge).text =
+                    if (gen > 1) "第${gen}次跟进" else ""
+                val chip = h.itemView.findViewById<TextView>(R.id.threadChip)
+                val snoozedUntil = runCatching { if (o.isNull("snoozed_until")) 0.0 else o.getDouble("snoozed_until") }.getOrDefault(0.0)
+                chip.text = when {
+                    snoozedUntil > 0 -> "将于 ${Api.fmtTs(snoozedUntil)} 再提醒"
+                    o.optString("last_resolution") == "actioned" -> "已办"
+                    o.optString("last_resolution") == "snooze" -> "稍后"
+                    o.optString("last_resolution") == "dismissed" -> "已忽略"
+                    else -> ""
+                }
+                h.itemView.findViewById<TextView>(R.id.threadTime).text =
+                    Api.fmtTime(o.optString("updated_at", ""))
+                h.itemView.setOnClickListener {
+                    seenPref.edit().putInt("seen_gen_$tid", gen).apply()
+                    startActivity(Intent(context, ThreadDetailActivity::class.java).putExtra("thread_id", tid))
+                    title.setTextColor(Api.themeColor(requireContext(), com.google.android.material.R.attr.colorOnSurface))
+                    title.text = o.optString("title", "事项 #$tid")
+                }
+            }
+        }
+        threadsRv.layoutManager = LinearLayoutManager(context)
+        threadsRv.adapter = threadAdapter
 
         fun feedback(id: Int, action: String) = Api.bg(requireContext()) {
             Api.postJson("/v2/notify/items/$id/feedback", JSONObject().put("action", action))
@@ -132,7 +176,11 @@ class NotifyFragment : Fragment() {
                 val it = q.getJSONObject(k)
                 sb.append(k + 1).append("  ").append(it.optString("summary", "(无摘要)")).append('\n')
             }
+            val t = Api.notifyThreads()
+            val got = Api.arr(t, "threads")
             Api.ui {
+                threads.clear(); for (k in 0 until got.length()) threads.add(got.getJSONObject(k))
+                threadAdapter.notifyDataSetChanged()
                 renderActive(act)
                 queueTv.text = if (sb.isEmpty()) "队列空——没有等待中的汇报" else "排队中（${q.length()}）\n$sb"
                 swipe.isRefreshing = false

@@ -26,6 +26,22 @@ def _resolve(list_name: str, key: str) -> str:
     conn.commit(); conn.close()
     return f"resolved {list_name}/{key}"
 
+def _thread_history(thread_key: str, n: int = 5) -> str:
+    """查 notify_threads 得线程 id，返回最近 n 条 item 的 "id|created|summary|resolution"（新→旧）。"""
+    conn = sqlite3.connect(DB, timeout=10)
+    conn.row_factory = sqlite3.Row
+    th = conn.execute("SELECT id FROM notify_threads WHERE thread_key=?", (thread_key.strip()[:128],)).fetchone()
+    if not th:
+        conn.close()
+        return f"thread not found: {thread_key}"
+    rows = conn.execute("""SELECT id,created_at,summary,resolution FROM notify_items
+                           WHERE thread_id=? ORDER BY id DESC LIMIT ?""",
+                        (th["id"], max(1, min(int(n), 20)))).fetchall()
+    conn.close()
+    return "\n".join(
+        f"{r['id']}|{time.strftime('%m-%d %H:%M', time.localtime(r['created_at']))}|"
+        f"{(r['summary'] or '')[:200]}|{r['resolution'] or '-'}" for r in rows) or "(empty)"
+
 def main() -> None:
     from mcp.server.fastmcp import FastMCP
     mcp = FastMCP("lifecore-lists")
@@ -44,6 +60,14 @@ def main() -> None:
     def resolve_item(list_name: str, key: str) -> str:
         """标记条目完成/结束（resolve 后不再出现在注入块里）。"""
         return _resolve(list_name.strip()[:64], key.strip()[:128])
+
+    @mcp.tool()
+    def thread_history(thread_key: str, n: int = 5) -> str:
+        """查通知线程的决议历史（notify_threads/notify_items，非清单）。续报某议题时先调它拼上下文：
+        返回该 thread_key 最近 n 条通知事项的 "id|时间|摘要|用户决议"（新→旧），
+        resolution 列为用户上次的选择（actioned=已办/dismissed=忽略/snooze=稍后）。
+        典型用法：用户说"稍后"过的话题再触发时，用此链写出"上次你说稍后，现在…"的续报文案。"""
+        return _thread_history(thread_key, n)
 
     mcp.run()  # stdio
 

@@ -6,6 +6,7 @@ lifecore-server — LifeCore 外围单进程（终审拓扑：pairing+BFF / regi
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import hashlib
@@ -24,7 +25,7 @@ import segno
 import uvicorn
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 
 # ───────────────────────── 配置 ─────────────────────────
@@ -145,6 +146,31 @@ def init_db() -> None:
         conn.commit()
     except sqlite3.OperationalError:
         pass
+    # 通知线程（docs/10 §2：thread_key 聚合议题、snooze 续报、决议链不回放原文）
+    conn.execute("""CREATE TABLE IF NOT EXISTS notify_threads(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_key TEXT NOT NULL UNIQUE,
+      channel_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',   -- 首条 summary（核心可 MCP 回填）
+      last_resolution TEXT,
+      last_resolved_at REAL,
+      last_item_id INTEGER,
+      item_count INTEGER NOT NULL DEFAULT 1,
+      snoozed_until REAL,
+      updated_at REAL NOT NULL
+    )""")
+    # 迁移：notify_items 挂线程（幂等 ALTER，参照 host 列写法）
+    try:
+        conn.execute("ALTER TABLE notify_items ADD COLUMN thread_id INTEGER REFERENCES notify_threads(id)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE notify_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'")  # normal | resume
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_items_thread ON notify_items(thread_id, id)")
     conn.commit()
     conn.close()
 
@@ -383,25 +409,58 @@ def promote_notify(conn: sqlite3.Connection) -> None:
     if nxt:
         conn.execute("UPDATE notify_items SET state='awaiting_feedback' WHERE id=?", (nxt["id"],))
 
-def enqueue_notify(conn: sqlite3.Connection, ch, payload: dict, seq: int) -> None:
+def resolve_thread_key(ch, payload: dict) -> str:
+    """thread_key 四级派生（契约 §4）：
+    ① payload.thread_key ② payload.pointer 命名空间前缀（wx:8832:chat123→wx:8832；gmail:abc→gmail:abc）
+    ③ channels.session_discriminator ④ 兜底 ch:{channel_id}"""
+    tk = str(payload.get("thread_key", "")).strip()
+    if tk:
+        return tk[:128]
+    ptr = str(payload.get("pointer", "")).strip()
+    if ":" in ptr:
+        parts = ptr.split(":")
+        if len(parts) >= 2:
+            return (parts[0] + ":" + parts[1])[:128]
+        return ptr[:128]
+    disc = ch["session_discriminator"] if "session_discriminator" in ch.keys() else None
+    if disc:
+        return str(disc).strip()[:128]
+    return f"ch:{ch['id']}"
+
+def upsert_notify_thread(conn: sqlite3.Connection, ch, thread_key: str, summary: str | None) -> int:
+    """线程头 UPSERT：item_count+1、title 仅首条写入、updated_at 刷新。返回 thread id。"""
+    t = now()
+    conn.execute("""INSERT INTO notify_threads(thread_key,channel_id,title,item_count,updated_at)
+                    VALUES(?,?,?,1,?)
+                    ON CONFLICT(thread_key) DO UPDATE SET item_count=item_count+1, updated_at=?""",
+                 (thread_key, ch["id"], summary or "", t, t))
+    return conn.execute("SELECT id FROM notify_threads WHERE thread_key=?", (thread_key,)).fetchone()["id"]
+
+def enqueue_notify(conn: sqlite3.Connection, ch, payload: dict, seq: int) -> int | None:
+    """入队 notify item 并挂到线程（docs/10 §2）。返回 item id（silent 模式返回 None）。"""
     mode = "notify"
     try:
         mode = (json.loads(ch["report_policy"]) or {}).get("mode", "notify")
     except Exception:
         pass
     if mode == "silent":
-        return
+        return None
     req_fb = 1 if payload.get("requires_feedback") else 0
     summary = str(payload.get("summary", ""))[:500] or None
     options = json.dumps(payload.get("feedback_options", []), ensure_ascii=False)
     state = "queued" if req_fb else "logged"
-    conn.execute("""INSERT INTO notify_items(event_seq,channel_id,state,summary,options,
-                    requires_feedback,priority,created_at)
-                    VALUES(?,?,?,?,?,?,?,?)""",
+    # 解析 thread_key → UPSERT 线程头（item_count+1，title 仅首条写 summary）
+    thread_id = upsert_notify_thread(conn, ch, resolve_thread_key(ch, payload), summary)
+    cur = conn.execute("""INSERT INTO notify_items(event_seq,channel_id,state,summary,options,
+                    requires_feedback,priority,created_at,thread_id,kind)
+                    VALUES(?,?,?,?,?,?,?,?,?,'normal')""",
                  (seq, ch["id"], state, summary, options, req_fb,
-                  str(payload.get("suggested_priority", "normal"))[:16], now()))
+                  str(payload.get("suggested_priority", "normal"))[:16], now(), thread_id))
+    conn.execute("UPDATE notify_threads SET last_item_id=?, updated_at=? WHERE id=?",
+                 (cur.lastrowid, now(), thread_id))
     if req_fb:
         promote_notify(conn)
+    return cur.lastrowid
 
 @app.post("/hk/{ch_id}")
 async def ingest(ch_id: str, request: Request) -> dict:
@@ -418,8 +477,10 @@ async def ingest(ch_id: str, request: Request) -> dict:
     cur = conn.execute("INSERT INTO events(channel_id,payload,received_at) VALUES(?,?,?)",
                        (ch_id, json.dumps(payload, ensure_ascii=False), now()))
     seq = cur.lastrowid
-    enqueue_notify(conn, ch, payload if isinstance(payload, dict) else {}, seq)
+    enqueued = enqueue_notify(conn, ch, payload if isinstance(payload, dict) else {}, seq)
     conn.commit()
+    if enqueued:
+        await ws_broadcast_snapshot()   # WS 推送：新 item 入队（契约 §2）
     # 转发 hermes（agent.md §2.2 同源签名；hermes 复验后按 route 规则处理）
     # 规范化：发送方若用 ensure_ascii=True（报文里全是 \uXXXX），重序列化为可读 UTF-8
     # 再用同一通道密钥重签——hermes 复验照旧通过，核心 agent 不再脑内解码。
@@ -452,6 +513,7 @@ async def test_event(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> d
                        (ch_id, json.dumps(payload, ensure_ascii=False), "internal:test", now()))
     enqueue_notify(conn, ch, payload, cur.lastrowid)
     conn.commit(); conn.close()
+    await ws_broadcast_snapshot()
     return {"status": "injected", "seq": cur.lastrowid}
 
 # ── lists：清单读写（agent 走 MCP 工具 list_mcp.py；人/App 走这里）──
@@ -502,32 +564,218 @@ def notify_item_json(r: sqlite3.Row) -> dict:
             "requires_feedback": bool(r["requires_feedback"]), "priority": r["priority"],
             "resolution": r["resolution"], "created_at": iso(r["created_at"])}
 
-@app.get("/v2/notify/active")
-def notify_active(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+def thread_ctx_json(conn: sqlite3.Connection, thread_id: int, exclude_id: int | None = None) -> dict | None:
+    """轻量线程上下文（契约 §1）：last_resolution + 上次那条摘要 + 最近 ≤3 条历史（新→旧）。"""
+    th = conn.execute("SELECT * FROM notify_threads WHERE id=?", (thread_id,)).fetchone()
+    if not th:
+        return None
+    if exclude_id is not None:
+        hist = conn.execute("""SELECT id,summary,resolution,created_at FROM notify_items
+                               WHERE thread_id=? AND id<>? ORDER BY id DESC LIMIT 3""",
+                            (thread_id, exclude_id)).fetchall()
+    else:
+        hist = conn.execute("""SELECT id,summary,resolution,created_at FROM notify_items
+                               WHERE thread_id=? ORDER BY id DESC LIMIT 3""",
+                            (thread_id,)).fetchall()
+    # last_summary = 最近一次有决议的那条（"上次那条"）；当前活动项自己不算
+    last_res = conn.execute("""SELECT summary FROM notify_items WHERE thread_id=? AND resolution IS NOT NULL
+                               ORDER BY id DESC LIMIT 1""", (thread_id,)).fetchone()
+    return {"last_resolution": th["last_resolution"],
+            "last_summary": last_res["summary"] if last_res else None,
+            "history": [{"id": h["id"], "summary": h["summary"], "resolution": h["resolution"],
+                         "created_at": iso(h["created_at"])} for h in hist]}
+
+def notify_item_full(conn: sqlite3.Connection, r: sqlite3.Row) -> dict:
+    """active/queue 条目：原字段不变 + 线程身份（thread_id/kind/thread_title/generation/thread_ctx）。"""
+    d = notify_item_json(r)
+    tid = r["thread_id"] if "thread_id" in r.keys() else None
+    if tid:
+        th = conn.execute("SELECT * FROM notify_threads WHERE id=?", (tid,)).fetchone()
+        if th:
+            d["thread_id"] = tid
+            d["kind"] = r["kind"] if "kind" in r.keys() else "normal"
+            d["thread_title"] = th["title"]
+            d["generation"] = th["item_count"]
+            d["thread_ctx"] = thread_ctx_json(conn, tid, exclude_id=r["id"])
+    return d
+
+def notify_snapshot() -> dict:
+    """完整快照（= /v2/notify/active 响应体；WS 广播同源，契约 §2）。"""
     conn = db()
     active = conn.execute("SELECT * FROM notify_items WHERE state='awaiting_feedback' ORDER BY id LIMIT 1").fetchone()
     queue = conn.execute("SELECT * FROM notify_items WHERE state='queued' ORDER BY id LIMIT 20").fetchall()
+    body = {"server_time": iso(now()),
+            "active": notify_item_full(conn, active) if active else None,
+            "queue": [notify_item_full(conn, r) for r in queue]}
     conn.close()
-    return {"server_time": iso(now()),
-            "active": notify_item_json(active) if active else None,
-            "queue": [notify_item_json(r) for r in queue]}
+    return body
+
+@app.get("/v2/notify/active")
+def notify_active(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    return notify_snapshot()
+
+@app.get("/v2/notify/threads")
+def notify_threads(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """线程列表（契约 §1）：新→旧，含最新一条 kind 与决议状态。"""
+    conn = db()
+    rows = conn.execute("""SELECT t.*,
+                           (SELECT kind FROM notify_items i WHERE i.thread_id=t.id ORDER BY i.id DESC LIMIT 1) kind_latest
+                           FROM notify_threads t ORDER BY t.updated_at DESC LIMIT 200""").fetchall()
+    conn.close()
+    return {"threads": [{"id": r["id"], "thread_key": r["thread_key"], "channel_id": r["channel_id"],
+            "title": r["title"], "item_count": r["item_count"], "kind_latest": r["kind_latest"],
+            "last_resolution": r["last_resolution"],
+            "last_resolved_at": iso(r["last_resolved_at"]) if r["last_resolved_at"] else None,
+            "snoozed_until": r["snoozed_until"],
+            "updated_at": iso(r["updated_at"])} for r in rows]}
+
+@app.get("/v2/notify/threads/{tid}/items")
+def notify_thread_items(tid: int, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """单线程时间线（契约 §1）：旧→新阅读顺序。"""
+    conn = db()
+    th = conn.execute("SELECT id FROM notify_threads WHERE id=?", (tid,)).fetchone()
+    if not th:
+        conn.close(); raise HTTPException(404, "thread not found")
+    rows = conn.execute("""SELECT id,summary,kind,state,resolution,options,created_at
+                           FROM notify_items WHERE thread_id=? ORDER BY id""", (tid,)).fetchall()
+    conn.close()
+    return {"items": [{"id": r["id"], "summary": r["summary"], "kind": r["kind"], "state": r["state"],
+            "resolution": r["resolution"], "options": json.loads(r["options"]),
+            "created_at": iso(r["created_at"])} for r in rows]}
 
 @app.post("/v2/notify/items/{item_id}/feedback")
-def notify_feedback(item_id: int, req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+async def notify_feedback(item_id: int, req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dict:
     body = req.scope.get("_json") or {}
     action = str(body.get("action", ""))
     if action not in ("actioned", "dismissed", "snooze"):
         raise HTTPException(400, "action must be actioned|dismissed|snooze")
+    # snooze 必须带 minutes 或 until（unix 秒）；fire_at 写入 notify_threads.snoozed_until
+    fire_at = None
+    if action == "snooze":
+        if body.get("minutes") is not None:
+            try:
+                fire_at = now() + float(body["minutes"]) * 60
+            except (TypeError, ValueError):
+                raise HTTPException(400, "bad minutes")
+        elif body.get("until") is not None:
+            try:
+                fire_at = float(body["until"])
+            except (TypeError, ValueError):
+                raise HTTPException(400, "bad until")
+        if fire_at is None:
+            raise HTTPException(400, "snooze requires minutes or until")
     conn = db()
     item = conn.execute("SELECT * FROM notify_items WHERE id=? AND state='awaiting_feedback'", (item_id,)).fetchone()
     if not item:
         conn.close(); raise HTTPException(409, "item not awaiting feedback")
     conn.execute("UPDATE notify_items SET state='resolved', resolution=?, resolved_at=? WHERE id=?",
                  (action, now(), item_id))
+    # 决议回写线程头（docs/10 §2：决议即历史）
+    if item["thread_id"]:
+        conn.execute("""UPDATE notify_threads SET last_resolution=?, last_resolved_at=?, updated_at=?,
+                        snoozed_until=COALESCE(?, snoozed_until) WHERE id=?""",
+                     (action, now(), now(), fire_at, item["thread_id"]))
     promote_notify(conn)
     nxt = conn.execute("SELECT * FROM notify_items WHERE state='awaiting_feedback' ORDER BY id LIMIT 1").fetchone()
+    next_active = notify_item_full(conn, nxt) if nxt else None
     conn.commit(); conn.close()
-    return {"resolved": action, "next_active": notify_item_json(nxt) if nxt else None}
+    await ws_broadcast_snapshot()   # WS 推送：feedback 决议 / snooze（契约 §2）
+    return {"resolved": action, "next_active": next_active}
+
+# ── WS 推送（契约 §2：低耗电统治模式；token 走 query，握手头受限）──
+_ws_conns: set = set()
+_ws_lock = asyncio.Lock()
+
+async def ws_broadcast_snapshot() -> None:
+    """向所有在线连接广播完整快照；发送失败的连接踢出集合。"""
+    if not _ws_conns:
+        return
+    snap = json.dumps(notify_snapshot(), ensure_ascii=False)
+    async with _ws_lock:
+        conns = list(_ws_conns)
+    dead = []
+    for ws in conns:
+        try:
+            await ws.send_text(snap)
+        except Exception:
+            dead.append(ws)
+    if dead:
+        async with _ws_lock:
+            for ws in dead:
+                _ws_conns.discard(ws)
+
+@app.websocket("/v2/notify/stream")
+async def notify_stream(ws: WebSocket, token: str = "") -> None:
+    th = hashlib.sha256(token.encode()).hexdigest()
+    conn = db()
+    dev = conn.execute("SELECT 1 FROM devices WHERE token_hash=?", (th,)).fetchone()
+    conn.close()
+    if not dev:
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    async with _ws_lock:
+        _ws_conns.add(ws)
+    try:
+        await ws.send_text(json.dumps(notify_snapshot(), ensure_ascii=False))  # 连接即推当前快照
+        while True:
+            await ws.receive_text()   # 客户端心跳/上行均不回执，只保活
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    except Exception:
+        pass
+    finally:
+        async with _ws_lock:
+            _ws_conns.discard(ws)
+
+# ── snooze 晋升循环（契约 §5：30s 扫描 → 幂等 → kind='resume' 续报 → promote → WS 广播）──
+SNOOZE_SCAN_SEC = 30
+
+async def snooze_promote_loop() -> None:
+    while True:
+        await asyncio.sleep(SNOOZE_SCAN_SEC)
+        try:
+            conn = db()
+            t = now()
+            due = conn.execute("""SELECT * FROM notify_threads
+                                  WHERE snoozed_until IS NOT NULL AND snoozed_until<=?""", (t,)).fetchall()
+            fired = False
+            for th in due:
+                # 幂等：同线程已有 queued/awaiting item 则跳过（单活动锁语义与 promote_notify 一致）
+                busy = conn.execute("""SELECT 1 FROM notify_items WHERE thread_id=?
+                                       AND state IN ('queued','awaiting_feedback') LIMIT 1""",
+                                    (th["id"],)).fetchone()
+                if busy:
+                    continue
+                last = conn.execute("SELECT summary,options FROM notify_items WHERE id=?",
+                                    (th["last_item_id"],)).fetchone() if th["last_item_id"] else None
+                summary = "[续报] " + str((last["summary"] if last and last["summary"] else th["title"]) or "跟进提醒")[:494]
+                try:
+                    options = json.loads(last["options"]) if last else []
+                except Exception:
+                    options = []
+                if not any("稍后" in str(o) for o in options):
+                    options = (list(options)[:2] or []) + ["稍后"]   # 第三格永远"稍后"
+                seq = conn.execute("SELECT COALESCE(MAX(seq),0) m FROM events").fetchone()["m"]
+                cur = conn.execute("""INSERT INTO notify_items(event_seq,channel_id,state,summary,options,
+                                requires_feedback,priority,created_at,thread_id,kind)
+                                VALUES(?,?,'queued',?,?,1,'normal',?,?,'resume')""",
+                             (seq, th["channel_id"], summary,
+                              json.dumps(options, ensure_ascii=False), t, th["id"]))
+                conn.execute("""UPDATE notify_threads SET item_count=item_count+1, last_item_id=?,
+                                snoozed_until=NULL, updated_at=? WHERE id=?""",
+                             (cur.lastrowid, t, th["id"]))
+                promote_notify(conn)   # 无活动项时晋升（与 enqueue 同源单活动锁）
+                fired = True
+            conn.commit(); conn.close()
+            if fired:
+                await ws_broadcast_snapshot()   # WS 推送：snooze 到期晋升（契约 §2）
+        except Exception as e:
+            logger.warning("snooze_promote_loop: %s", e)
+
+@app.on_event("startup")
+async def _start_snooze_loop() -> None:
+    asyncio.create_task(snooze_promote_loop())
 
 @app.get("/v2/events")
 def events_since(since: int = 0, limit: int = 200, dev: sqlite3.Row = Depends(auth_device)) -> dict:

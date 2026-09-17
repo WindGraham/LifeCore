@@ -20,6 +20,7 @@ object Api {
     val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(180, TimeUnit.SECONDS)
+        .pingInterval(20, TimeUnit.SECONDS)   // WS 心跳（契约 §2：pingInterval 20s）
         .build()
 
     fun init(ctx: Context) {
@@ -43,6 +44,41 @@ object Api {
     }
 
     fun logout() = prefs.edit().remove("device_token").apply()
+
+    /** http(s) base → ws(s)，拼 WS 握手地址（契约 §2：query token 鉴权）。 */
+    fun wsUrl(path: String): String =
+        baseUrl.replaceFirst(Regex("^http"), "ws") + path
+
+    /** 线程收件箱（契约 §1 GET /v2/notify/threads，新→旧）。 */
+    fun notifyThreads(): JSONObject = getJson("/v2/notify/threads")
+
+    /** 线程时间线（契约 §1 GET /v2/notify/threads/{tid}/items，旧→新）。 */
+    fun notifyThreadItems(tid: Int): JSONObject = getJson("/v2/notify/threads/$tid/items")
+
+    /** 决议回执（契约 §1 POST /v2/notify/items/{id}/feedback）。 */
+    fun notifyFeedback(id: Int, action: String, minutes: Int? = null, until: Long? = null): JSONObject {
+        val b = JSONObject().put("action", action)
+        minutes?.let { b.put("minutes", it) }
+        until?.let { b.put("until", it) }
+        return postJson("/v2/notify/items/$id/feedback", b)
+    }
+
+    /** unix 秒 → "MM-dd HH:mm"；空值返回空串。 */
+    fun fmtTs(unix: Double?): String {
+        if (unix == null || unix <= 0) return ""
+        return try {
+            java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
+                .withZone(java.time.ZoneId.systemDefault())
+                .format(java.time.Instant.ofEpochSecond(unix.toLong()))
+        } catch (_: Exception) { "" }
+    }
+
+    /** 主题属性取色（深色模式友好：全部走 ?attr，禁硬编码色值）。 */
+    fun themeColor(ctx: Context, attr: Int): Int {
+        val tv = android.util.TypedValue()
+        ctx.theme.resolveAttribute(attr, tv, true)
+        return tv.data
+    }
 
     /** ISO 时间 → "MM-dd HH:mm"；解析失败截断原样返回。 */
     fun fmtTime(iso: String?): String {

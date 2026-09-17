@@ -28,6 +28,12 @@
         </activity>
         <activity android:name=".MainActivity" android:exported="false" />
         <activity android:name=".ChatActivity" android:exported="false" />
+        <activity android:name=".ThreadDetailActivity" android:exported="false" />
+        <receiver android:name=".FeedbackReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="art.windgraham.lifecore.NOTIFY_FEEDBACK" />
+            </intent-filter>
+        </receiver>
         <service android:name=".PlayService" android:exported="false"
             android:foregroundServiceType="dataSync|mediaPlayback" />
         <receiver android:name=".BootReceiver" android:exported="true">
