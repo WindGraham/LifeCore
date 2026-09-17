@@ -37,7 +37,8 @@ class ChannelsFragment : Fragment() {
                 val o = rows[pos]
                 h.itemView.findViewById<TextView>(R.id.chName).text = o.getString("name")
                 h.itemView.findViewById<TextView>(R.id.chMeta).text =
-                    "${o.getString("archetype")} · ${o.getString("uplink_level")} · ${o.getString("channel_id")}"
+                    "${o.getString("archetype").uppercase()} · ${o.getString("uplink_level")} · " +
+                    Api.fmtTime(o.optString("created_at", ""))
                 h.itemView.setOnLongClickListener {
                     AlertDialog.Builder(context).setTitle("删除通道 ${o.getString("name")}？")
                         .setPositiveButton("删除") { _, _ ->

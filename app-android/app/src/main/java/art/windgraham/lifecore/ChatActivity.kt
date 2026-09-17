@@ -22,11 +22,39 @@ import com.google.android.material.button.MaterialButton
 import org.json.JSONObject
 import java.io.File
 
-/** 会话对话：选中的 agent 会话；slash 命令（/model /personality /new）原生透传；
- *  语音输入（MiniMax STT 代理）+ 播报（MiniMax TTS 代理）。 */
+/** 会话对话：气泡渲染（用户右/AI 左/工具折叠成小字）；
+ *  slash 命令原生透传；语音输入（STT 代理）+ 单条播报（TTS 代理）。 */
 class ChatActivity : AppCompatActivity() {
+    data class Msg(val kind: Int, val text: String)
+    companion object {
+        const val K_USER = 0
+        const val K_AI = 1
+        const val K_TOOL = 2
+        /** 把 hermes 消息折叠成渲染条目：tool 角色 → 一行小字，超长 JSON 不展开。 */
+        fun fold(role: String, content: String): Msg? {
+            val c = content.trim()
+            if (c.isBlank()) return null
+            return when (role) {
+                "user", "human" -> Msg(K_USER, c)
+                "assistant", "ai" -> Msg(K_AI, c)
+                else -> {
+                    val label = runCatching {
+                        val o = JSONObject(c)
+                        when {
+                            o.has("tools") -> "⚙ 工具清单已加载（${o.getJSONObject("tools").length()} 个）"
+                            o.has("name") -> "⚙ 调用工具 · ${o.getString("name")}"
+                            o.has("error") -> "⚙ 工具错误（已折叠）"
+                            else -> "⚙ 工具消息（已折叠）"
+                        }
+                    }.getOrElse { "⚙ 工具消息（已折叠）" }
+                    Msg(K_TOOL, label)
+                }
+            }
+        }
+    }
+
     private lateinit var sid: String
-    private val msgs = mutableListOf<Pair<String, String>>() // role to content
+    private val msgs = mutableListOf<Msg>()
     private lateinit var adapter: MsgAdapter
     private var recorder: MediaRecorder? = null
     private var recFile: File? = null
@@ -39,7 +67,7 @@ class ChatActivity : AppCompatActivity() {
         title = intent.getStringExtra("title") ?: sid
 
         val rv = findViewById<RecyclerView>(R.id.chatRv)
-        adapter = MsgAdapter(msgs)
+        adapter = MsgAdapter()
         rv.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         rv.adapter = adapter
 
@@ -58,15 +86,15 @@ class ChatActivity : AppCompatActivity() {
         Api.bg(this) {
             val r = Api.getJson("/v2/sessions/$sid/messages")
             val data = Api.arr(r, "data")
-            val loaded = mutableListOf<Pair<String, String>>()
+            val loaded = mutableListOf<Msg>()
             for (i in 0 until data.length()) {
                 val m = data.getJSONObject(i)
                 val role = m.optString("role", m.optString("author", "?"))
-                val content = m.optString("content", m.optString("text", m.toString()))
-                if (content.isNotBlank()) loaded.add(role to content)
+                val content = m.optString("content", m.optString("text", ""))
+                fold(role, content)?.let { loaded.add(it) }
             }
             Api.ui {
-                msgs.clear(); msgs.addAll(loaded.takeLast(100))
+                msgs.clear(); msgs.addAll(loaded.takeLast(150))
                 adapter.notifyDataSetChanged()
                 findViewById<RecyclerView>(R.id.chatRv).scrollToPosition(maxOf(0, msgs.size - 1))
             }
@@ -74,13 +102,16 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun send(text: String) {
-        msgs.add("user" to text); adapter.notifyItemInserted(msgs.size - 1)
+        msgs.add(Msg(K_USER, text)); adapter.notifyItemInserted(msgs.size - 1)
         scroll()
         Api.bg(this) {
             val r = Api.postJson("/v2/sessions/$sid/chat", JSONObject().put("message", text))
             val reply = r.optString("response", r.optString("content",
-                r.optString("message", r.optString("text", r.toString().take(500)))))
-            Api.ui { msgs.add("assistant" to reply); adapter.notifyItemInserted(msgs.size - 1); scroll() }
+                r.optString("message", r.optString("text", ""))))
+            Api.ui {
+                if (reply.isNotBlank()) { msgs.add(Msg(K_AI, reply)); adapter.notifyItemInserted(msgs.size - 1) }
+                scroll()
+            }
         }
     }
 
@@ -102,7 +133,7 @@ class ChatActivity : AppCompatActivity() {
             setOutputFile(recFile!!.absolutePath)
             prepare(); start()
         }
-        toast("录音中…再点一次结束")
+        toast("● 录音中…再点一次结束")
     }
 
     private fun stopRecord() {
@@ -150,22 +181,37 @@ class ChatActivity : AppCompatActivity() {
         super.onDestroy(); recorder?.release(); player?.release()
     }
 
-    inner class MsgAdapter(private val data: List<Pair<String, String>>) :
-        RecyclerView.Adapter<MsgAdapter.VH>() {
-        inner class VH(v: View) : RecyclerView.ViewHolder(v) {
-            val role: TextView = v.findViewById(R.id.msgRole)
+    inner class MsgAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+        inner class UserVH(v: View) : RecyclerView.ViewHolder(v) {
+            val content: TextView = v.findViewById(R.id.msgContent)
+        }
+        inner class AiVH(v: View) : RecyclerView.ViewHolder(v) {
             val content: TextView = v.findViewById(R.id.msgContent)
             val speakBtn: ImageButton = v.findViewById(R.id.btnSpeak)
         }
-        override fun getItemCount() = data.size
-        override fun onCreateViewHolder(p: ViewGroup, vt: Int) = VH(
-            LayoutInflater.from(p.context).inflate(R.layout.item_message, p, false))
-        override fun onBindViewHolder(h: VH, pos: Int) {
-            val (role, content) = data[pos]
-            h.role.text = if (role == "user") "你" else "agent"
-            h.content.text = content
-            h.speakBtn.visibility = if (role == "user") View.GONE else View.VISIBLE
-            h.speakBtn.setOnClickListener { speak(content) }
+        inner class ToolVH(v: View) : RecyclerView.ViewHolder(v) {
+            val content: TextView = v.findViewById(R.id.msgContent)
+        }
+        override fun getItemCount() = msgs.size
+        override fun getItemViewType(pos: Int) = msgs[pos].kind
+        override fun onCreateViewHolder(p: ViewGroup, vt: Int): RecyclerView.ViewHolder {
+            val li = LayoutInflater.from(p.context)
+            return when (vt) {
+                K_USER -> UserVH(li.inflate(R.layout.item_msg_user, p, false))
+                K_AI -> AiVH(li.inflate(R.layout.item_msg_ai, p, false))
+                else -> ToolVH(li.inflate(R.layout.item_msg_tool, p, false))
+            }
+        }
+        override fun onBindViewHolder(h: RecyclerView.ViewHolder, pos: Int) {
+            val m = msgs[pos]
+            when (h) {
+                is UserVH -> h.content.text = m.text
+                is AiVH -> {
+                    h.content.text = m.text
+                    h.speakBtn.setOnClickListener { speak(m.text) }
+                }
+                is ToolVH -> h.content.text = m.text
+            }
         }
     }
 }

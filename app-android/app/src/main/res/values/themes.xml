@@ -2,6 +2,10 @@
 <resources>
     <style name="Theme.LifeCore" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/lc_primary</item>
-        <item name="colorSecondary">@color/lc_secondary</item>
+        <item name="colorOnPrimary">@color/lc_on_primary</item>
+        <item name="colorPrimaryContainer">@color/lc_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/lc_on_primary_container</item>
+        <item name="android:statusBarColor">?attr/colorSurface</item>
+        <item name="android:navigationBarColor">?attr/colorSurface</item>
     </style>
 </resources>

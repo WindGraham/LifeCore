@@ -33,7 +33,9 @@ class SessionsFragment : Fragment() {
             override fun onBindViewHolder(h: RecyclerView.ViewHolder, pos: Int) {
                 val r = rows[pos]
                 h.itemView.findViewById<TextView>(R.id.sessionTitle).text = r.title
-                h.itemView.findViewById<TextView>(R.id.sessionMeta).text = r.id
+                val t = Api.fmtTime(r.updated)
+                h.itemView.findViewById<TextView>(R.id.sessionMeta).text =
+                    if (t.isNotBlank()) t else r.id.take(13)
                 h.itemView.setOnClickListener {
                     startActivity(Intent(context, ChatActivity::class.java)
                         .putExtra("session_id", r.id).putExtra("title", r.title))
@@ -101,8 +103,10 @@ class NotifyFragment : Fragment() {
             if (o == null) { card.visibility = View.GONE; return }
             card.visibility = View.VISIBLE
             card.findViewById<TextView>(R.id.notifySummary).text = o.optString("summary", "(无摘要)")
+            val pr = o.optString("priority", "normal").uppercase()
+            val pt = Api.fmtTime(o.optString("created_at", ""))
             card.findViewById<TextView>(R.id.notifyMeta).text =
-                "通道 ${o.optString("channel_id")} · ${o.optString("priority")} · ${o.optString("created_at","").take(19)}"
+                listOf(pr, pt).filter { it.isNotBlank() }.joinToString("  ·  ")
             val iid = o.getInt("id")
             val opts = Api.arr(o, "options")
             card.findViewById<com.google.android.material.button.MaterialButton>(R.id.btnOpt1).apply {
@@ -126,11 +130,11 @@ class NotifyFragment : Fragment() {
             val sb = StringBuilder()
             for (k in 0 until q.length()) {
                 val it = q.getJSONObject(k)
-                sb.append("• ").append(it.optString("summary", "(无摘要)")).append('\n')
+                sb.append(k + 1).append("  ").append(it.optString("summary", "(无摘要)")).append('\n')
             }
             Api.ui {
                 renderActive(act)
-                queueTv.text = if (sb.isEmpty()) "队列空" else "排队中（${q.length()}）：\n$sb"
+                queueTv.text = if (sb.isEmpty()) "队列空——没有等待中的汇报" else "排队中（${q.length()}）\n$sb"
                 swipe.isRefreshing = false
             }
         } }

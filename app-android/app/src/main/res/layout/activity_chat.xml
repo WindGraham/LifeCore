@@ -1,15 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="match_parent"
-    android:orientation="vertical" android:padding="8dp">
+    android:orientation="vertical" android:paddingTop="8dp">
     <androidx.recyclerview.widget.RecyclerView android:id="@+id/chatRv"
-        android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+        android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:clipToPadding="false" android:paddingVertical="8dp" />
+    <com.google.android.material.divider.MaterialDivider android:layout_width="match_parent" android:layout_height="wrap_content" />
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical">
-        <ImageButton android:id="@+id/btnMic" android:layout_width="48dp" android:layout_height="48dp"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:paddingHorizontal="10dp" android:paddingVertical="8dp">
+        <ImageButton android:id="@+id/btnMic" android:layout_width="44dp" android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_btn_speak_now" android:contentDescription="语音输入" />
         <EditText android:id="@+id/chatInput" android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:hint="输入消息（/model /personality /new 可用）" />
+            android:layout_weight="1" android:layout_marginHorizontal="6dp"
+            android:hint="说点什么…（/model /new 可用）" android:maxLines="4"
+            android:background="@android:color/transparent" />
         <com.google.android.material.button.MaterialButton android:id="@+id/btnSend"
             android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="发送" />
     </LinearLayout>

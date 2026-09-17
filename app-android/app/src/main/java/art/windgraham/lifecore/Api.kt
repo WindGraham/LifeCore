@@ -44,6 +44,23 @@ object Api {
 
     fun logout() = prefs.edit().remove("device_token").apply()
 
+    /** ISO 时间 → "MM-dd HH:mm"；解析失败截断原样返回。 */
+    fun fmtTime(iso: String?): String {
+        if (iso.isNullOrBlank()) return ""
+        return try {
+            val fixed = when {
+                iso.endsWith("Z") -> iso
+                iso.matches(Regex(".*[+-]\\d\\d:?\\d\\d$")) -> iso
+                else -> iso + "Z"
+            }
+            val p = java.time.OffsetDateTime.parse(fixed).toInstant()
+            java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
+                .withZone(java.time.ZoneId.systemDefault()).format(p)
+        } catch (_: Exception) {
+            iso.take(16)
+        }
+    }
+
     /** 同步调用；必须在后台线程。返回 (httpCode, bodyString)。 */
     fun call(method: String, path: String, body: JSONObject? = null, raw: ByteArray? = null,
              contentType: String? = null, withAuth: Boolean = true): Pair<Int, String> {
