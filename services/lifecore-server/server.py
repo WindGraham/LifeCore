@@ -1054,12 +1054,13 @@ MINIMAX_HOST = os.environ.get("LC_MINIMAX_HOST", "https://api.minimaxi.com")
 @app.post("/v2/tts")
 async def tts(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> Response:
     body = req.scope.get("_json") or {}
-    text, voice = str(body.get("text", ""))[:2000], str(body.get("voice", "male-qn-qingse"))
+    text, voice = str(body.get("text", ""))[:2000], str(body.get("voice", MINIMAX_TTS_VOICE))
     if not text:
         raise HTTPException(400, "text required")
     if not MINIMAX_KEY:
         raise HTTPException(500, "LC_MINIMAX_KEY not configured")
-    payload = {"model": "speech-01-240228", "text": text, "stream": False,
+    payload = {"model": MINIMAX_TTS_MODEL, "text": text, "stream": False,
+               "output_format": "hex", "language_boost": "auto",
                "voice_setting": {"voice_id": voice, "speed": 1.0, "vol": 1.0, "pitch": 0}}
     async with httpx.AsyncClient(timeout=60) as cli:
         r = await cli.post(f"{MINIMAX_HOST}/v1/t2a_v2",

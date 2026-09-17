@@ -267,19 +267,31 @@ class PlayService : Service() {
     // ── TTS / 前台通知 ──
 
     private fun speak(text: String) {
-        try {
-            val (code, bytes) = Api.callBytes("POST", "/v2/tts",
-                body = JSONObject().put("text", "LifeCore 提醒：$text"))
-            if (code != 200) return
-            val f = File.createTempFile("lc_auto", ".mp3", cacheDir)
-            f.writeBytes(bytes); f.deleteOnExit()
-            handler.post {
-                player?.release()
-                player = MediaPlayer().apply {
-                    setDataSource(f.absolutePath); prepare(); start()
+        // 网络拉取必须在后台线程（主线程 NetworkOnMainThreadException 会被静默吞掉）
+        Thread {
+            try {
+                val (code, bytes) = Api.callBytes("POST", "/v2/tts",
+                    body = JSONObject().put("text", "LifeCore 提醒：$text"))
+                android.util.Log.i("LC-TTS", "tts fetch code=$code bytes=${bytes.size}")
+                if (code != 200) return@Thread
+                val f = File.createTempFile("lc_auto", ".mp3", cacheDir)
+                f.writeBytes(bytes); f.deleteOnExit()
+                handler.post {
+                    player?.release()
+                    player = MediaPlayer().apply {
+                        setOnErrorListener { _, what, extra ->
+                            android.util.Log.e("LC-TTS", "MediaPlayer error what=$what extra=$extra")
+                            false
+                        }
+                        setOnCompletionListener { android.util.Log.i("LC-TTS", "play complete") }
+                        setDataSource(f.absolutePath); prepare(); start()
+                        android.util.Log.i("LC-TTS", "playback started")
+                    }
                 }
+            } catch (e: Exception) {
+                android.util.Log.e("LC-TTS", "speak failed: ${e.javaClass.simpleName}: ${e.message}")
             }
-        } catch (_: Exception) { }
+        }.start()
     }
 
     private fun buildNotif(title: String, body: String): Notification {
