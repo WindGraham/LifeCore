@@ -13,6 +13,7 @@ class MainActivity : AppCompatActivity() {
         Api.init(this)
         if (Api.token == null) { startActivity(Intent(this, PairActivity::class.java)); finish(); return }
         setContentView(R.layout.activity_main)
+        ensurePlayService()   // 打开 App 即自愈播报服务（服务通知被划掉/进程回收后恢复）
         val nav = findViewById<BottomNavigationView>(R.id.bottomNav)
         nav.setOnItemSelectedListener { item ->
             when (item.itemId) {
@@ -30,5 +31,13 @@ class MainActivity : AppCompatActivity() {
     private fun show(f: Fragment): Boolean {
         supportFragmentManager.beginTransaction().replace(R.id.container, f).commit()
         return true
+    }
+
+    private fun ensurePlayService() {
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 26)
+                startForegroundService(Intent(this, PlayService::class.java))
+            else startService(Intent(this, PlayService::class.java))
+        }
     }
 }
