@@ -749,7 +749,11 @@ async def snooze_promote_loop() -> None:
                     continue
                 last = conn.execute("SELECT summary,options FROM notify_items WHERE id=?",
                                     (th["last_item_id"],)).fetchone() if th["last_item_id"] else None
-                summary = "[续报] " + str((last["summary"] if last and last["summary"] else th["title"]) or "跟进提醒")[:494]
+                base_summary = str((last["summary"] if last and last["summary"] else th["title"]) or "跟进提醒")[:494]
+                if base_summary.startswith("[续报]"):
+                    summary = base_summary            # 防重复前缀（resume 的 resume）
+                else:
+                    summary = "[续报] " + base_summary
                 try:
                     options = json.loads(last["options"]) if last else []
                 except Exception:
