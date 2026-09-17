@@ -306,8 +306,10 @@ def create_channel(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dic
     route_name = f"lc_{ch_id}"
     secret = "lc_" + secrets.token_hex(24)
     # hermes webhook subscribe：热加载，免重启（docs/04 §10）
+    # prompt 用字段模板而非 {__raw__}：hermes 渲染 __raw__ 时 json.dumps 默认
+    # ensure_ascii=True 会把中文转成 \uXXXX；字段模板按原样插入字符串。
     subscribe_args = ["webhook", "subscribe", route_name,
-                      "--prompt", "{__raw__}",
+                      "--prompt", "LifeCore 通道事件 level={level} archetype={archetype} pointer={pointer} priority={suggested_priority}：{summary}",
                       "--deliver", "log",
                       "--secret", secret,
                       "--description", f"lifecore channel {name}"]
