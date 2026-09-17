@@ -54,7 +54,8 @@ class PlayService : Service() {
             acquire(24L * 60 * 60 * 1000)   // 24h 上限，服务活着就持续持有
         }
         startForeground(NOTIF_ID, buildNotif("LifeCore 自动播报", "等待新汇报…"))
-        lastPlayedId = -1
+        // 单调递增去重：持久化已播报的最大 item id，重启/WS 重连回放快照不会重播
+        lastPlayedId = getSharedPreferences("lifecore", MODE_PRIVATE).getInt("last_spoken_id", -1)
         connectWs()
         return START_STICKY
     }
@@ -140,15 +141,16 @@ class PlayService : Service() {
             val id = active.getInt("id")
             updateNotif("待处理：" + active.optString("summary", "有新事项").take(40))
             postItemNotif(active)
-            if (id != lastPlayedId) {          // 仅新条目朗读一次（snooze/resume 同 id 不轰炸）
+            if (id > lastPlayedId) {          // 单调递增：仅全新条目朗读（重连回放/空active不重置）
                 lastPlayedId = id
+                getSharedPreferences("lifecore", MODE_PRIVATE)
+                    .edit().putInt("last_spoken_id", id).apply()
                 val title = active.optString("thread_title", "")
                 val line = active.optString("summary", "").substringBefore('\n').take(60)
                 speak(listOf(title, line).filter { it.isNotBlank() }.joinToString("。"))
             }
         } else {
             updateNotif("自动播报运行中 · 队列 ${q.length()}")
-            lastPlayedId = -1
         }
     }
 
