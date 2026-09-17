@@ -136,3 +136,13 @@ VPS 挂载 60G 数据盘 /dev/vdb1 → /data（与 docker 等共用）。系统�
 迁移后全量自检：三服务 active、state-block 注入端点活、桥心跳新鲜（本机 google-bridge
 无感续跑）、5 通道在网、MCP 配置完好。journald 已封顶 100M 防复发。
 恢复注意：灾难重建时先做 /data 软链再启服务；备份应涵盖 /data/lifecore-data 与 /data/hermes。
+
+## 12. 通知线程延续 P1+P2 落地（2026-09-17，双 worker 并行）
+
+- **表**：notify_threads + notify_items 加 thread_id/kind；thread_key 四级派生；snooze 晋升循环 30s（kind=resume，[续报] 前缀防叠）。
+- **端点**：/v2/notify/threads(+items)、WS /v2/notify/stream（快照广播：入队/晋升/反馈/snooze到期）。
+- **手机端**：PlayService 重写为 WS 长连统治模式（20s ping、退避 2→60s、断线 2 分钟才降级 60s 轮询）；MessagingStyle 通知续命（100000+thread_id、引用条"上次你说稍后"、锁屏脱敏）；线程收件箱+详情页（AI 左/用户决议右气泡）。
+- **坑**：①uvicorn 需 websockets 包否则 WS 握手 404（/opt/lifecore/venv 补装）；②nginx Upgrade 头被转义反斜线污染（`\$http_upgrade`）；③silent 通道不产生线程（设计如此）；④resume 的 resume 前缀叠加（已修）。
+- **root 保活**：deviceidle disable + app_standby 0 + adaptive_battery 0（OTA/重启后按需重放）。
+- **E2E 实测**：同群 3 事件归并一议题（item_count 正确、title 取首条）；snooze 1 分钟到期自动生成 [续报] 条目晋升单活动锁（用户真实点掉=决议回流验证）；WS 连接即收快照、经 nginx wss 全链路透。
+- **契约**：contracts/app-notify-contract.md（冻结基准）。设计：docs/10。
