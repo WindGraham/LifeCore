@@ -1,11 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent" android:layout_height="match_parent"
     android:orientation="vertical">
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar" android:layout_width="match_parent" android:layout_height="wrap_content"
         android:background="?attr/colorSurface" android:title="@string/title_thread"
         android:navigationIcon="?attr/homeAsUpIndicator" android:titleTextColor="?attr/colorOnSurface" />
+    <!-- P1-S3：header 增加"查看 timeline"按钮 -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:padding="10dp" android:gravity="center_vertical">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:textSize="12sp"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:text="点击下方按钮查看完整 timeline（含 resolved + resume）" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/btnTimeline"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="查看 timeline" style="@style/Widget.Material3.Button.OutlinedButton" />
+    </LinearLayout>
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/threadRv" android:layout_width="match_parent" android:layout_height="0dp"
         android:layout_weight="1" android:paddingTop="8dp" android:clipToPadding="false" />

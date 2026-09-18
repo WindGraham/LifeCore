@@ -35,6 +35,7 @@ import {
   Globe,
   Heart,
   KeyRound,
+  ListChecks,
   Menu,
   MessageSquare,
   Package,
@@ -109,6 +110,10 @@ const LcNotifyPage = lazy(() => import("@/pages/lifecore/NotifyPage"));
 const LcChannelsPage = lazy(() => import("@/pages/lifecore/ChannelsPage"));
 const LcJobsPage = lazy(() => import("@/pages/lifecore/JobsPage"));
 const LcSettingsPage = lazy(() => import("@/pages/lifecore/SettingsPage"));
+// P0-S1 / P0-S2 / P1-S4 — see docs/18 + docs/17.
+const LcAllItemsPage = lazy(() => import("@/pages/lifecore/AllItemsPage"));
+const LcEventsPage = lazy(() => import("@/pages/lifecore/EventsPage"));
+const LcOwnerOnlyPage = lazy(() => import("@/pages/lifecore/OwnerOnlyPage"));
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -135,10 +140,6 @@ function RouteFallback({ label = "Loading…" }: { label?: string }) {
       </div>
     </div>
   );
-}
-
-function RootRedirect() {
-  return <Navigate to="/sessions" replace />;
 }
 
 function UnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
@@ -200,6 +201,9 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/lc-channels": LcChannelsPage,
   "/lc-jobs": LcJobsPage,
   "/lc-settings": LcSettingsPage,
+  "/lc-all": LcAllItemsPage,
+  "/lc-events": LcEventsPage,
+  "/lc-owner": LcOwnerOnlyPage,
 };
 
 // Route placeholder for /chat.  The persistent ChatPage host (rendered
@@ -243,6 +247,24 @@ const BUILTIN_NAV_REST: NavItem[] = [
     path: "/lc-settings",
     label: "LifeCore · Settings",
     icon: ShieldCheck,
+  },
+  // P1-S4 — owner-only dashboard
+  {
+    path: "/lc-owner",
+    label: "LifeCore · Owner-only",
+    icon: Shield,
+  },
+  // P0-S2 — raw event stream
+  {
+    path: "/lc-events",
+    label: "LifeCore · Events",
+    icon: Activity,
+  },
+  // P0-S1 — all notify_items table
+  {
+    path: "/lc-all",
+    label: "LifeCore · All items",
+    icon: ListChecks,
   },
   {
     path: "/sessions",

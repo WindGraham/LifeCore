@@ -70,6 +70,58 @@ object Api {
     fun notifyThreads(): JSONObject = getJson("/v2/notify/threads")
     fun notifyThreadItems(tid: Int): JSONObject = getJson("/v2/notify/threads/$tid/items")
 
+    /**
+     * notify_items 全 state 视图（P0-S1 / P1-S4）。
+     *
+     * @param state           awaiting_feedback / queued / logged 等；不传 = 全状态
+     * @param addressedToOwner 1=只返回主人专属（addressed_to_owner=true）；不传 = 不过滤
+     * @param priority        high / normal / all
+     * @param limit / offset  分页（默认 50 / 0）
+     */
+    fun notifyAll(state: String? = null, addressedToOwner: Boolean? = null,
+                  priority: String? = null, limit: Int = 50, offset: Int = 0): JSONObject {
+        val qs = mutableListOf<String>()
+        state?.takeIf { it.isNotBlank() }?.let { qs.add("state=" + java.net.URLEncoder.encode(it, "UTF-8")) }
+        addressedToOwner?.let { qs.add("addressed_to_owner=" + (if (it) "1" else "0")) }
+        priority?.takeIf { it.isNotBlank() && it != "all" }?.let { qs.add("priority=" + java.net.URLEncoder.encode(it, "UTF-8")) }
+        qs.add("limit=" + limit)
+        qs.add("offset=" + offset)
+        return getJson("/v2/notify/all?" + qs.joinToString("&"))
+    }
+
+    /**
+     * 事件流（P0-S2）。
+     *
+     * @param channelId 通道过滤；不传 = 全通道
+     * @param sinceSeq  从该 seq 之后拉（增量刷新）
+     * @param limit     默认 100
+     */
+    fun events(channelId: String? = null, sinceSeq: Long? = null, limit: Int = 100): JSONObject {
+        val qs = mutableListOf<String>()
+        channelId?.takeIf { it.isNotBlank() }?.let { qs.add("channel_id=" + java.net.URLEncoder.encode(it, "UTF-8")) }
+        sinceSeq?.takeIf { it > 0 }?.let { qs.add("since=" + it) }
+        qs.add("limit=" + minOf(limit, 1000))
+        return getJson("/v2/events?" + qs.joinToString("&"))
+    }
+
+    /**
+     * 线程完整时间线（P1-S3）—— 复用 /v2/notify/threads/{tid}/items（已存在），
+     * 包成更明确的命名以供 ThreadDetailActivity 在新增的"查看 timeline"按钮处调用。
+     */
+    fun threadTimeline(threadId: Long): JSONObject = getJson("/v2/notify/threads/$threadId/items")
+
+    /**
+     * 通道健康度（P1-S5）。返回 bridge_status 的精简版：
+     *   { online, last_seen, last_command_at, name, detail, server_time }
+     */
+    fun bridgeHealth(): JSONObject = getJson("/v2/bridge/status")
+
+    /**
+     * 真 digest（P1-S6）—— docs/12 §2.5 卡片 A 服务端聚合；
+     * 失败时返回空对象（TodayFragment 兜底用旧 threads 视图）。
+     */
+    fun digestToday(): JSONObject = getJson("/v2/digest/today")
+
     fun notifyFeedback(id: Int, action: String, minutes: Int? = null, until: Long? = null): JSONObject {
         val b = JSONObject().put("action", action)
         minutes?.let { b.put("minutes", it) }

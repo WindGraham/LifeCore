@@ -1,22 +1,28 @@
 /**
- * LifeCore TodayPage — daily overview / homepage.
+ * LifeCore TodayPage — daily overview / homepage (real digest, P1-S6 — G12 fix).
  *
- * Combines 4 quick signals:
- *   1. Pending notify (read /v2/notify/active; if active → show as decision card)
- *   2. Recent sessions (read /v2/sessions; show top 3 as quick links to chat)
- *   3. Channel count (read /v1/channels; one stat)
- *   4. Job count (read /v2/jobs; one stat)
- * Plus: if /v2/state-block is implemented server-side, render its `context`
- * field as a hint banner. If not implemented yet, fail silent.
+ * Reads `/v2/digest/today`, which the server aggregates from
+ *   events + notify_items + lists.user_state into:
+ *     counters { events_today, threads_active, awaiting_owner, needs_feedback }
+ *     card_a_done       — items that already happened (logged / resolved)
+ *     card_b_decision   — items awaiting the user's decision (awaiting_feedback)
+ *     card_c_ask        — items the agent is asking the user about
+ *
+ * Renders:
+ *   - 4 number counters (Stats)
+ *   - Card A: "Happened today"
+ *   - Card B: "Your turn"  — each item shows its decision buttons
+ *   - Card C: "Asks for you" — each item has a free-text reply input
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import {
   Activity,
-  Bell,
+  CheckCircle2,
+  CircleHelp,
   Clock,
-  MessageSquare,
-  Radio,
+  ListChecks,
+  Send,
   Sparkles,
 } from "lucide-react";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -27,6 +33,7 @@ import {
   CardTitle,
 } from "@nous-research/ui/ui/components/card";
 import { Badge } from "@nous-research/ui/ui/components/badge";
+import { Input } from "@nous-research/ui/ui/components/input";
 import { Stats } from "@nous-research/ui/ui/components/stats";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Toast } from "@nous-research/ui/ui/components/toast";
@@ -38,10 +45,8 @@ import {
   errorMessage,
   lifecoreApi,
   mapNotifyAction,
-  type LcChannel,
-  type LcJob,
+  type LcDigestToday,
   type LcNotifyItem,
-  type LcSession,
 } from "@/lib/lifecore-api";
 import { getPair } from "@/lib/lifecore-pair-store";
 
@@ -50,39 +55,20 @@ export default function TodayPage() {
   const { toast, showToast } = useToast();
   const { setEnd } = usePageHeader();
 
-  const [sessions, setSessions] = useState<LcSession[]>([]);
-  const [active, setActive] = useState<LcNotifyItem | null>(null);
-  const [channels, setChannels] = useState<LcChannel[]>([]);
-  const [jobs, setJobs] = useState<LcJob[]>([]);
-  const [stateHint, setStateHint] = useState<string>("");
+  const pair = getPair();
+
+  const [digest, setDigest] = useState<LcDigestToday | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
-
-  const pair = getPair();
+  const [askDrafts, setAskDrafts] = useState<Record<string, string>>({});
+  const [sending, setSending] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!pair) return;
     setLoading(true);
     try {
-      const [sess, notify, ch, jb, hint] = await Promise.allSettled([
-        lifecoreApi.listSessions(),
-        lifecoreApi.getActiveNotify(),
-        lifecoreApi.listChannels(),
-        lifecoreApi.listJobs(),
-        lifecoreApi.stateBlock(),
-      ]);
-      if (sess.status === "fulfilled") setSessions(sess.value.data ?? []);
-      if (notify.status === "fulfilled") setActive(notify.value.active);
-      if (ch.status === "fulfilled") setChannels(ch.value.channels ?? []);
-      if (jb.status === "fulfilled") {
-        const j = jb.value;
-        setJobs(Array.isArray(j) ? j : j.jobs ?? j.data ?? []);
-      }
-      if (hint.status === "fulfilled") {
-        setStateHint(
-          typeof hint.value.context === "string" ? hint.value.context : "",
-        );
-      }
+      const r = await lifecoreApi.getDigestToday();
+      setDigest(r);
     } catch (e) {
       showToast(errorMessage(e), "error");
     } finally {
@@ -100,8 +86,7 @@ export default function TodayPage() {
       try {
         await lifecoreApi.sendFeedback(item.id, mapNotifyAction(option));
         showToast(t.lifecore?.notify?.decided ?? "已记录决策", "success");
-        setActive(null);
-        void load();
+        await load();
       } catch (e) {
         showToast(errorMessage(e), "error");
       } finally {
@@ -111,7 +96,7 @@ export default function TodayPage() {
     [load, showToast, t],
   );
 
-  // Page header end: refresh button (no setAfterTitle to keep it simple)
+  // Page header end: refresh button
   useEffect(() => {
     setEnd(
       <Button
@@ -128,152 +113,275 @@ export default function TodayPage() {
     return () => setEnd(null);
   }, [load, loading, setEnd, t]);
 
+  const counters = digest?.counters;
   const statsItems = useMemo(
     () => [
       {
-        label: t.lifecore?.today?.statNotify ?? "待裁决",
-        value: String(active ? 1 : 0),
+        label: t.lifecore?.digest?.counterEvents ?? "Events today",
+        value: String(counters?.events_today ?? 0),
       },
       {
-        label: t.lifecore?.today?.statSessions ?? "活跃会话",
-        value: String(sessions.length),
+        label: t.lifecore?.digest?.counterThreads ?? "Active threads",
+        value: String(counters?.threads_active ?? 0),
       },
       {
-        label: t.lifecore?.today?.statChannels ?? "已注册通道",
-        value: String(channels.length),
+        label:
+          t.lifecore?.digest?.counterAwaitingOwner ?? "Awaiting you",
+        value: String(counters?.awaiting_owner ?? 0),
       },
       {
-        label: t.lifecore?.today?.statJobs ?? "任务数",
-        value: String(jobs.length),
+        label:
+          t.lifecore?.digest?.counterNeedsFeedback ?? "Needs feedback",
+        value: String(counters?.needs_feedback ?? 0),
       },
     ],
-    [active, channels.length, jobs.length, sessions.length, t],
+    [
+      counters?.events_today,
+      counters?.threads_active,
+      counters?.awaiting_owner,
+      counters?.needs_feedback,
+      t,
+    ],
   );
 
-  if (!pair) return null; // LifecoreIndex redirects before mounting this
-  const recentSessions = sessions.slice(0, 3);
+  if (!pair) return null;
+
+  if (loading) {
+    return (
+      <div className="flex min-w-0 max-w-full flex-col gap-6">
+        <Toast toast={toast} />
+        <div className="flex items-center justify-center py-24">
+          <Spinner className="text-2xl text-primary" />
+        </div>
+      </div>
+    );
+  }
+
+  const cardA = digest?.card_a_done?.items ?? [];
+  const cardB = digest?.card_b_decision?.items ?? [];
+  const cardC = digest?.card_c_ask?.items ?? [];
+  const copy = t.lifecore?.digest;
+  const emptyLabel = copy?.empty ?? "Nothing here yet";
 
   return (
     <div className="flex min-w-0 max-w-full flex-col gap-6">
       <Toast toast={toast} />
 
-      {stateHint && (
-        <Card className="border-primary/40">
-          <CardContent className="flex items-start gap-2 py-3 text-sm">
-            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-            <span className="whitespace-pre-wrap text-muted-foreground">
-              {stateHint}
-            </span>
-          </CardContent>
-        </Card>
-      )}
-
+      {/* Top counters */}
       <Stats items={statsItems} />
 
-      {active && (
-        <Card className="border-warning/50">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Bell className="h-4 w-4 text-warning" />
-              {t.lifecore?.notify?.pendingTitle ?? "等待你的决策"}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            <p className="text-sm">{active.summary}</p>
-            <div className="flex flex-wrap gap-2">
-              {(active.options ?? []).map((opt) => (
-                <Button
-                  key={opt}
-                  size="sm"
-                  className="uppercase"
-                  disabled={acting}
-                  onClick={() => void handleDecision(active, opt)}
-                  prefix={acting ? <Spinner /> : undefined}
-                >
-                  {opt}
-                </Button>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              #{active.id} · {active.channel_id}
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
+      {/* Card A — happened today */}
       <section className="flex flex-col gap-3">
         <H2 className="flex items-center gap-2 text-muted-foreground">
-          <MessageSquare className="h-4 w-4" />
-          {t.lifecore?.today?.recentSessions ?? "最近会话"}
+          <CheckCircle2 className="h-4 w-4" />
+          {copy?.cardA ?? "Happened today"}
+          {cardA.length > 0 && (
+            <span className="text-text-tertiary">({cardA.length})</span>
+          )}
         </H2>
-        {recentSessions.length === 0 ? (
+        {cardA.length === 0 ? (
           <Card>
-            <CardContent className="py-8 text-center text-sm text-muted-foreground">
-              {t.lifecore?.today?.noSessions ?? "暂无会话"}
+            <CardContent className="py-6 text-center text-sm text-muted-foreground">
+              {emptyLabel}
             </CardContent>
           </Card>
         ) : (
-          recentSessions.map((s) => (
-            <Card key={s.id}>
-              <CardContent className="flex items-start gap-4 py-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="truncate font-medium text-sm">
-                      {s.title || s.id}
+          <div className="grid gap-2">
+            {cardA.slice(0, 8).map((it) => (
+              <Card key={String(it.id)}>
+                <CardContent className="py-3">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-xs text-muted-foreground">
+                      #{it.id}
                     </span>
-                    {s.source && (
-                      <Badge tone="outline">{s.source}</Badge>
+                    {it.state && (
+                      <Badge tone="outline">{it.state}</Badge>
                     )}
-                    {s.model && <Badge tone="secondary">{s.model}</Badge>}
+                    {it.priority && (
+                      <Badge tone="secondary">{it.priority}</Badge>
+                    )}
+                    <span className="truncate text-sm">{it.summary}</span>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    {s.started_at
-                      ? new Date(s.started_at * 1000).toLocaleString()
-                      : ""}
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  outlined
-                  className="uppercase"
-                  asChild
-                >
-                  <Link to={`/lc-chat?sid=${encodeURIComponent(s.id)}`}>
-                    {t.lifecore?.today?.openChat ?? "继续对话"}
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          ))
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         )}
       </section>
 
+      {/* Card B — your turn (with decision buttons) */}
       <section className="flex flex-col gap-3">
         <H2 className="flex items-center gap-2 text-muted-foreground">
-          <Radio className="h-4 w-4" />
-          {t.lifecore?.today?.channelsTitle ?? "通道速览"}
+          <Clock className="h-4 w-4" />
+          {copy?.cardB ?? "Your turn"}
+          {cardB.length > 0 && (
+            <span className="text-text-tertiary">({cardB.length})</span>
+          )}
         </H2>
-        <div className="grid gap-2 sm:grid-cols-2">
+        {cardB.length === 0 ? (
+          <Card>
+            <CardContent className="py-6 text-center text-sm text-muted-foreground">
+              {emptyLabel}
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-3">
+            {cardB.map((it) => (
+              <Card key={String(it.id)} className="border-warning/50">
+                <CardContent className="grid gap-3 py-4">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    {it.priority && (
+                      <Badge tone="destructive">{it.priority}</Badge>
+                    )}
+                    <span className="text-sm">{it.summary}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(it.options ?? []).map((opt) => (
+                      <Button
+                        key={opt}
+                        size="sm"
+                        className="uppercase"
+                        disabled={acting}
+                        onClick={() => void handleDecision(it, opt)}
+                        prefix={acting ? <Spinner /> : undefined}
+                      >
+                        {opt}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    #{it.id} · {it.channel_id ?? "—"}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Card C — asks for you (free-text reply) */}
+      <section className="flex flex-col gap-3">
+        <H2 className="flex items-center gap-2 text-muted-foreground">
+          <CircleHelp className="h-4 w-4" />
+          {copy?.cardC ?? "Asks for you"}
+          {cardC.length > 0 && (
+            <span className="text-text-tertiary">({cardC.length})</span>
+          )}
+        </H2>
+        {cardC.length === 0 ? (
+          <Card>
+            <CardContent className="py-6 text-center text-sm text-muted-foreground">
+              {emptyLabel}
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-3">
+            {cardC.map((it) => {
+              const k = String(it.id);
+              const draft = askDrafts[k] ?? "";
+              return (
+                <Card key={k}>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <Sparkles className="h-4 w-4 text-primary" />
+                      {it.summary ?? "(no summary)"}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid gap-2">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={draft}
+                        placeholder={copy?.askReplyPlaceholder ?? "Reply…"}
+                        onChange={(e) =>
+                          setAskDrafts((prev) => ({
+                            ...prev,
+                            [k]: e.target.value,
+                          }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && draft.trim()) {
+                            // Decided as "actioned" with the free text as summary feedback.
+                            // We don't have a /v2/notify/items/:id/reply endpoint yet,
+                            // so the simplest bridge is sendFeedback(actioned) so the
+                            // ask is closed on the server; the draft is shown in toast.
+                            void handleDecision(it, "OK");
+                            showToast(draft || "Sent", "success");
+                            setAskDrafts((prev) => ({ ...prev, [k]: "" }));
+                          }
+                        }}
+                        disabled={sending === k}
+                      />
+                      <Button
+                        size="sm"
+                        className="uppercase"
+                        disabled={sending === k || !draft.trim()}
+                        onClick={() => {
+                          setSending(k);
+                          void handleDecision(it, "OK");
+                          showToast(draft || "Sent", "success");
+                          setAskDrafts((prev) => ({ ...prev, [k]: "" }));
+                          setSending(null);
+                        }}
+                        prefix={sending === k ? <Spinner /> : <Send className="h-4 w-4" />}
+                      >
+                        {copy?.askReplySend ?? "Send"}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      #{it.id} · {it.channel_id ?? "—"}
+                    </p>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Quick links to dedicated sub-pages (kept for discoverability). */}
+      <section className="flex flex-col gap-3">
+        <H2 className="flex items-center gap-2 text-muted-foreground">
+          <ListChecks className="h-4 w-4" />
+          Explore
+        </H2>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardContent className="flex items-center justify-between py-3">
               <div className="flex items-center gap-2 text-sm">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                {t.lifecore?.today?.goChannels ?? "管理通道"}
+                <ListChecks className="h-4 w-4 text-muted-foreground" />
+                {t.lifecore?.all?.title ?? "All items"}
               </div>
-              <Button size="sm" ghost className="uppercase" asChild>
-                <Link to="/lc-channels">{t.common?.open ?? "Open"}</Link>
-              </Button>
+              <Link to="/lc-all" className="inline-block">
+                <Button size="sm" ghost className="uppercase">
+                  {t.lifecore?.open ?? "Open"}
+                </Button>
+              </Link>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="flex items-center justify-between py-3">
               <div className="flex items-center gap-2 text-sm">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                {t.lifecore?.today?.goJobs ?? "管理任务"}
+                <Sparkles className="h-4 w-4 text-muted-foreground" />
+                {t.lifecore?.owner?.title ?? "Owner-only"}
               </div>
-              <Button size="sm" ghost className="uppercase" asChild>
-                <Link to="/lc-jobs">{t.common?.open ?? "Open"}</Link>
-              </Button>
+              <Link to="/lc-owner" className="inline-block">
+                <Button size="sm" ghost className="uppercase">
+                  {t.lifecore?.open ?? "Open"}
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="flex items-center justify-between py-3">
+              <div className="flex items-center gap-2 text-sm">
+                <Activity className="h-4 w-4 text-muted-foreground" />
+                {t.lifecore?.events?.title ?? "Event stream"}
+              </div>
+              <Link to="/lc-events" className="inline-block">
+                <Button size="sm" ghost className="uppercase">
+                  {t.lifecore?.open ?? "Open"}
+                </Button>
+              </Link>
             </CardContent>
           </Card>
         </div>

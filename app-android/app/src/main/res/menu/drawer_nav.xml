@@ -7,6 +7,12 @@
         <item android:id="@+id/nav_notify"
             android:title="@string/nav_notify"
             android:icon="@android:drawable/ic_popup_reminder" />
+        <item android:id="@+id/nav_owner"
+            android:title="@string/nav_owner"
+            android:icon="@android:drawable/ic_dialog_email" />
+        <item android:id="@+id/nav_events"
+            android:title="@string/nav_events"
+            android:icon="@android:drawable/ic_menu_recent_history" />
         <item android:id="@+id/nav_sessions"
             android:title="@string/nav_sessions"
             android:icon="@android:drawable/ic_menu_send" />
@@ -15,7 +21,7 @@
             android:icon="@android:drawable/ic_menu_share" />
         <item android:id="@+id/nav_jobs"
             android:title="@string/nav_jobs"
-            android:icon="@android:drawable/ic_menu_recent_history" />
+            android:icon="@android:drawable/ic_menu_agenda" />
         <item android:id="@+id/nav_settings"
             android:title="@string/nav_settings"
             android:icon="@android:drawable/ic_menu_preferences" />

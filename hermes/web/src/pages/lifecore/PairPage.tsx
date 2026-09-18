@@ -6,7 +6,7 @@
  * On success → navigate to /lc-today. Standalone route — NOT a sub-page
  * of SettingsPage (per design: pairing is the product entry point).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { KeyRound, Link2, ShieldCheck } from "lucide-react";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -36,7 +36,6 @@ export default function PairPage() {
   );
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
-  const codeRef = useRef<HTMLInputElement>(null);
 
   // If already paired (e.g. user typed the URL by hand), skip ahead.
   useEffect(() => {
@@ -57,7 +56,6 @@ export default function PairPage() {
         t.lifecore?.pair?.needCode ?? "配对码应为 8 位数字",
         "error",
       );
-      codeRef.current?.focus();
       return;
     }
     setBusy(true);
@@ -121,7 +119,6 @@ export default function PairPage() {
             </Label>
             <Input
               id="pair-code"
-              ref={codeRef}
               autoFocus
               autoComplete="one-time-code"
               inputMode="numeric"

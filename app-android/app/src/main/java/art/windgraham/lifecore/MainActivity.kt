@@ -15,6 +15,9 @@ import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.navigation.NavigationView
 import art.windgraham.lifecore.ui.today.TodayFragment
 import art.windgraham.lifecore.ui.notify.NotifyListFragment
+import art.windgraham.lifecore.ui.owner.OwnerOnlyFragment
+import art.windgraham.lifecore.ui.events.EventsFragment
+import art.windgraham.lifecore.ui.all.AllItemsFragment
 import art.windgraham.lifecore.ui.channels.ChannelsFragment
 import art.windgraham.lifecore.ui.jobs.JobsFragment
 import art.windgraham.lifecore.ui.settings.SettingsFragment
@@ -80,6 +83,8 @@ class MainActivity : AppCompatActivity() {
         return when (id) {
             R.id.nav_today -> switchTo(R.id.nav_today, getString(R.string.title_today))
             R.id.nav_notify -> switchTo(R.id.nav_notify, getString(R.string.title_notify))
+            R.id.nav_owner -> switchTo(R.id.nav_owner, getString(R.string.title_owner))
+            R.id.nav_events -> switchTo(R.id.nav_events, getString(R.string.title_events))
             R.id.nav_sessions -> openSessions()
             R.id.nav_channels -> switchTo(R.id.nav_channels, getString(R.string.title_channels))
             R.id.nav_jobs -> switchTo(R.id.nav_jobs, getString(R.string.title_jobs))
@@ -92,6 +97,8 @@ class MainActivity : AppCompatActivity() {
         val frag: Fragment = when (id) {
             R.id.nav_today -> TodayFragment()
             R.id.nav_notify -> NotifyListFragment()
+            R.id.nav_owner -> OwnerOnlyFragment()
+            R.id.nav_events -> EventsFragment()
             R.id.nav_channels -> ChannelsFragment()
             R.id.nav_jobs -> JobsFragment()
             R.id.nav_settings -> SettingsFragment()

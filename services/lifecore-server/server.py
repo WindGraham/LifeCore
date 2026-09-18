@@ -170,7 +170,13 @@ def init_db() -> None:
         conn.commit()
     except sqlite3.OperationalError:
         pass
+    try:
+        conn.execute("ALTER TABLE notify_items ADD COLUMN addressed_to_owner INTEGER NOT NULL DEFAULT 0")  # P1-S4 主人专属
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     conn.execute("CREATE INDEX IF NOT EXISTS idx_items_thread ON notify_items(thread_id, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_items_owner ON notify_items(addressed_to_owner)")
     conn.commit()
     conn.close()
 
@@ -436,6 +442,60 @@ def upsert_notify_thread(conn: sqlite3.Connection, ch, thread_key: str, summary:
                  (thread_key, ch["id"], summary or "", t, t))
     return conn.execute("SELECT id FROM notify_threads WHERE thread_key=?", (thread_key,)).fetchone()["id"]
 
+def _owner_pointers() -> set[str]:
+    """LC_OWNER_POINTERS 环境变量：逗号分隔的主人 wxid / user_id 列表。空时仅依赖 payload 显式标记。"""
+    raw = os.environ.get("LC_OWNER_POINTERS", "").strip()
+    if not raw:
+        return set()
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+def compute_addressed_to_owner(payload: dict) -> bool:
+    """P1-S4 主人专属分级规则（纯规则判断，不接 LLM）：
+    ① payload.addressed_to_owner / to_owner / addressed_owner 显式 truthy → True
+    ② payload.pointer 命中 LC_OWNER_POINTERS 主人列表（wxid/user_id 命名空间前缀匹配）→ True
+    ③ payload.mentions_owner / at_owner / mention_owner 真值 → True
+    ④ payload.recipient 是 owner 标识（如 "owner" / "self"）→ True
+    其余一律 False（默认共享上下文，不分主人专属）。"""
+    if not isinstance(payload, dict):
+        return False
+    # ① 显式标记
+    for key in ("addressed_to_owner", "to_owner", "addressed_owner"):
+        v = payload.get(key)
+        if isinstance(v, bool) and v:
+            return True
+        if isinstance(v, (int, float)) and v == 1:
+            return True
+        if isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "owner"):
+            return True
+    # ② 指针命中主人列表
+    owners = _owner_pointers()
+    if owners:
+        ptr = str(payload.get("pointer", "")).strip()
+        if ptr:
+            # pointer 命名空间前缀：wx:owner_id:chat → wx:owner_id
+            head = ":".join(ptr.split(":")[:2]) if ":" in ptr else ptr
+            if head in owners or ptr in owners:
+                return True
+        # sender/from 命中
+        for k in ("sender", "from", "from_user", "user_id", "wxid", "sender_id"):
+            v = str(payload.get(k, "")).strip()
+            if v and (v in owners or (":" in v and v.split(":")[0] in owners)):
+                return True
+    # ③ @主人 标记
+    for key in ("mentions_owner", "at_owner", "mention_owner"):
+        v = payload.get(key)
+        if isinstance(v, bool) and v:
+            return True
+        if isinstance(v, (int, float)) and v == 1:
+            return True
+    # ④ recipient 自我/主人
+    rcpt = str(payload.get("recipient", "")).strip().lower()
+    if rcpt in ("owner", "self", "me"):
+        return True
+    return False
+
+
+
 def enqueue_notify(conn: sqlite3.Connection, ch, payload: dict, seq: int) -> int | None:
     """入队 notify item 并挂到线程（docs/10 §2）。返回 item id（silent 模式返回 None）。"""
     mode = "notify"
@@ -451,11 +511,14 @@ def enqueue_notify(conn: sqlite3.Connection, ch, payload: dict, seq: int) -> int
     state = "queued" if req_fb else "logged"
     # 解析 thread_key → UPSERT 线程头（item_count+1，title 仅首条写 summary）
     thread_id = upsert_notify_thread(conn, ch, resolve_thread_key(ch, payload), summary)
+    # P1-S4 主人专属分级：规则判断（payload 显式标记 / 指针命中主人列表 / @主人提及）
+    addressed_to_owner = 1 if compute_addressed_to_owner(payload) else 0
     cur = conn.execute("""INSERT INTO notify_items(event_seq,channel_id,state,summary,options,
-                    requires_feedback,priority,created_at,thread_id,kind)
-                    VALUES(?,?,?,?,?,?,?,?,?,'normal')""",
+                    requires_feedback,priority,created_at,thread_id,kind,addressed_to_owner)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                  (seq, ch["id"], state, summary, options, req_fb,
-                  str(payload.get("suggested_priority", "normal"))[:16], now(), thread_id))
+                  str(payload.get("suggested_priority", "normal"))[:16], now(), thread_id,
+                  "normal", addressed_to_owner))
     conn.execute("UPDATE notify_threads SET last_item_id=?, updated_at=? WHERE id=?",
                  (cur.lastrowid, now(), thread_id))
     if req_fb:
@@ -562,7 +625,9 @@ def notify_item_json(r: sqlite3.Row) -> dict:
     return {"id": r["id"], "event_seq": r["event_seq"], "channel_id": r["channel_id"],
             "state": r["state"], "summary": r["summary"], "options": json.loads(r["options"]),
             "requires_feedback": bool(r["requires_feedback"]), "priority": r["priority"],
-            "resolution": r["resolution"], "created_at": iso(r["created_at"])}
+            "resolution": r["resolution"], "created_at": iso(r["created_at"]),
+            "addressed_to_owner": bool(r["addressed_to_owner"])
+            if "addressed_to_owner" in r.keys() else False}
 
 def thread_ctx_json(conn: sqlite3.Connection, thread_id: int, exclude_id: int | None = None) -> dict | None:
     """轻量线程上下文（契约 §1）：last_resolution + 上次那条摘要 + 最近 ≤3 条历史（新→旧）。"""
@@ -604,9 +669,17 @@ def notify_snapshot() -> dict:
     conn = db()
     active = conn.execute("SELECT * FROM notify_items WHERE state='awaiting_feedback' ORDER BY id LIMIT 1").fetchone()
     queue = conn.execute("SELECT * FROM notify_items WHERE state='queued' ORDER BY id LIMIT 20").fetchall()
+    # P1-S4 计数（仅数字，不发列表；App 决定是否提示"主人专属")
+    addressed_to_owner_count = conn.execute(
+        "SELECT COUNT(*) c FROM notify_items WHERE addressed_to_owner=1 AND state IN ('queued','awaiting_feedback')"
+    ).fetchone()["c"]
+    # P0-S2 增量拉：WS 连接时给客户端当前最大 seq，便于补齐
+    last_event_seq = conn.execute("SELECT COALESCE(MAX(seq),0) m FROM events").fetchone()["m"]
     body = {"server_time": iso(now()),
             "active": notify_item_full(conn, active) if active else None,
-            "queue": [notify_item_full(conn, r) for r in queue]}
+            "queue": [notify_item_full(conn, r) for r in queue],
+            "addressed_to_owner_count": addressed_to_owner_count,
+            "last_event_seq": last_event_seq}
     conn.close()
     return body
 
@@ -782,15 +855,28 @@ async def _start_snooze_loop() -> None:
     asyncio.create_task(snooze_promote_loop())
 
 @app.get("/v2/events")
-def events_since(since: int = 0, limit: int = 200, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+def events_since(since_seq: int = 0, channel_id: str = "", limit: int = 100,
+                 dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """P0-S2 events 流可见：按 seq 倒序；channel_id 过滤；since_seq 增量拉。
+    payload substring 截断 200 字符（原始 JSON 体积大，App 列表只渲染摘要）。"""
+    lim = max(1, min(limit, 500))
     conn = db()
-    rows = conn.execute("SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?",
-                        (since, min(limit, 1000))).fetchall()
+    if channel_id:
+        rows = conn.execute(
+            "SELECT * FROM events WHERE seq>? AND channel_id=? ORDER BY seq DESC LIMIT ?",
+            (since_seq, channel_id, lim)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM events WHERE seq>? ORDER BY seq DESC LIMIT ?",
+            (since_seq, lim)).fetchall()
     maxseq = conn.execute("SELECT COALESCE(MAX(seq),0) m FROM events").fetchone()["m"]
     conn.close()
-    return {"server_time": iso(now()), "max_seq": maxseq,
+    return {"server_time": iso(now()), "max_seq": maxseq, "next_seq": maxseq,
             "events": [{"seq": r["seq"], "channel_id": r["channel_id"],
-                        "payload": json.loads(r["payload"]), "at": iso(r["received_at"])} for r in rows]}
+                        "payload": (r["payload"] or "")[:200],
+                        "payload_truncated": len(r["payload"] or "") > 200,
+                        "upstream_status": r["upstream_status"],
+                        "received_at": iso(r["received_at"])} for r in rows]}
 
 @app.get("/v2/me")
 def me(dev: sqlite3.Row = Depends(auth_device)) -> dict:
@@ -1297,6 +1383,232 @@ async def v2_session_chat_stream(sid: str, req: Request, dev: sqlite3.Row = Depe
 # removed in the LifeCore dashboard rewrite. The SPA UI is now served by
 # the Hermes dashboard under /console/lc-*. See deploy/nginx-lc-redirect.conf
 # for the legacy /lc → /console/lc-today redirect.
+
+# ───────────────────── P0-S1 + P1-S3 + P1-S4 + P1-S5 + P1-S6 新端点 ─────────────────────
+
+@app.get("/v2/notify/all")
+def notify_all(state: str = "all", channel_id: str = "", addressed_to_owner: int = -1,
+               priority: str = "", limit: int = 50, offset: int = 0,
+               dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """P0-S1 notify_items 全 state 可见。
+    state: logged | awaiting_feedback | resolved | queued | all（默认 all）
+    addressed_to_owner: -1=不限, 0=仅非主人, 1=仅主人（P1-S4 主人专属分级）
+    priority: high | normal（可选；不传 = 全量）
+    limit: 默认 50，最大 500。offset 用于翻页。
+    返回结构（契约）：{ items, total, limit, offset, server_time, state, channel_id,
+                       addressed_to_owner, priority }——与 /v2/notify/active 同源（notify_item_full）。"""
+    lim = max(1, min(limit, 500))
+    off = max(0, offset)
+    valid_states = {"logged", "awaiting_feedback", "resolved", "queued"}
+    if state != "all" and state not in valid_states:
+        raise HTTPException(400, f"state must be one of {sorted(valid_states) + ['all']}")
+    if priority and priority not in {"high", "normal"}:
+        raise HTTPException(400, "priority must be high|normal")
+    where, params = [], []
+    if state != "all":
+        where.append("state=?"); params.append(state)
+    if channel_id:
+        where.append("channel_id=?"); params.append(channel_id)
+    if addressed_to_owner in (0, 1):
+        where.append("addressed_to_owner=?"); params.append(addressed_to_owner)
+    if priority:
+        where.append("priority=?"); params.append(priority)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    conn = db()
+    total = conn.execute(f"SELECT COUNT(*) c FROM notify_items {where_sql}", params).fetchone()["c"]
+    rows = conn.execute(
+        f"SELECT * FROM notify_items {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?",
+        params + [lim, off]).fetchall()
+    items = [notify_item_full(conn, r) for r in rows]
+    conn.close()
+    return {"server_time": iso(now()), "state": state, "channel_id": channel_id or None,
+            "addressed_to_owner": addressed_to_owner, "priority": priority or None,
+            "limit": lim, "offset": off,
+            "total": total, "items": items}
+
+@app.get("/v2/threads/{tid}/timeline")
+def thread_timeline(tid: int, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """P1-S3 链路全景：某 thread 的全部历史 items + resolved_at + resolution + feedback。
+    按 id 升序（旧→新阅读顺序），含 thread 头信息。"""
+    conn = db()
+    th = conn.execute("SELECT * FROM notify_threads WHERE id=?", (tid,)).fetchone()
+    if not th:
+        conn.close(); raise HTTPException(404, "thread not found")
+    rows = conn.execute(
+        """SELECT id,event_seq,channel_id,state,summary,options,requires_feedback,
+                  priority,resolution,created_at,resolved_at,thread_id,kind,addressed_to_owner
+           FROM notify_items WHERE thread_id=? ORDER BY id""", (tid,)).fetchall()
+    conn.close()
+    items = []
+    for r in rows:
+        items.append({
+            "id": r["id"], "event_seq": r["event_seq"], "channel_id": r["channel_id"],
+            "state": r["state"], "summary": r["summary"],
+            "options": json.loads(r["options"] or "[]"),
+            "requires_feedback": bool(r["requires_feedback"]),
+            "priority": r["priority"], "resolution": r["resolution"],
+            "created_at": iso(r["created_at"]),
+            "resolved_at": iso(r["resolved_at"]) if r["resolved_at"] else None,
+            "thread_id": r["thread_id"], "kind": r["kind"],
+            "addressed_to_owner": bool(r["addressed_to_owner"]) if "addressed_to_owner" in r.keys() else False,
+        })
+    return {"server_time": iso(now()),
+            "thread": {"id": th["id"], "thread_key": th["thread_key"],
+                       "channel_id": th["channel_id"], "title": th["title"],
+                       "item_count": th["item_count"],
+                       "last_resolution": th["last_resolution"],
+                       "last_resolved_at": iso(th["last_resolved_at"]) if th["last_resolved_at"] else None,
+                       "snoozed_until": iso(th["snoozed_until"]) if th["snoozed_until"] else None,
+                       "updated_at": iso(th["updated_at"])},
+            "items": items}
+
+@app.get("/v2/bridge/health")
+def bridge_health(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """P1-S5 通道健康：每个 channel 的 last_event_at / events_24h / bridge_heartbeat / status。
+    status: active | stale (>1h 无事件) | silent (>24h 无事件) | revoked。"""
+    conn = db()
+    chs = conn.execute("SELECT * FROM channels ORDER BY created_at").fetchall()
+    out = []
+    t_now = now()
+    for ch in chs:
+        last = conn.execute(
+            "SELECT MAX(received_at) m FROM events WHERE channel_id=?", (ch["id"],)).fetchone()["m"]
+        cnt_24 = conn.execute(
+            "SELECT COUNT(*) c FROM events WHERE channel_id=? AND received_at>?",
+            (ch["id"], t_now - 86400)).fetchone()["c"]
+        # bridge_heartbeat 联查：按 host 名（无 host 时按 channel name）
+        hb = None
+        if ch["host"]:
+            hb = conn.execute(
+                "SELECT last_seen FROM bridge_heartbeat WHERE name=? ORDER BY last_seen DESC LIMIT 1",
+                (ch["host"],)).fetchone()
+        elif ch["name"]:
+            hb = conn.execute(
+                "SELECT last_seen FROM bridge_heartbeat WHERE name=? ORDER BY last_seen DESC LIMIT 1",
+                (ch["name"],)).fetchone()
+        if ch["revoked"]:
+            st = "revoked"
+        elif last is None:
+            st = "silent"
+        elif (t_now - last) > 86400:
+            st = "silent"
+        elif (t_now - last) > 3600:
+            st = "stale"
+        else:
+            st = "active"
+        out.append({
+            "channel_id": ch["id"],
+            "name": ch["name"],
+            "archetype": ch["archetype"],
+            "revoked": bool(ch["revoked"]),
+            "host": ch["host"] if "host" in ch.keys() else "",
+            "last_event_at": iso(last) if last else None,
+            "events_24h": cnt_24,
+            "bridge_last_seen": iso(hb["last_seen"]) if hb and hb["last_seen"] else None,
+            "status": st,
+        })
+    conn.close()
+    return {"server_time": iso(now()), "channels": out}
+
+def _digest_card_done(conn: sqlite3.Connection, since_ts: float) -> list:
+    """P1-S6 卡片 A：今日已发生——events 近 24h（去重）+ 非主人专属且已 logged 的 notify_items。"""
+    rows = conn.execute(
+        """SELECT seq,channel_id,payload,received_at FROM events
+           WHERE received_at>=? ORDER BY received_at DESC LIMIT 50""",
+        (since_ts,)).fetchall()
+    items = []
+    for r in rows:
+        try:
+            p = json.loads(r["payload"]) if r["payload"] else {}
+        except Exception:
+            p = {"summary": (r["payload"] or "")[:120]}
+        items.append({
+            "source": r["channel_id"],
+            "summary": str(p.get("summary") or p.get("text") or "")[:200] or "(无摘要)",
+            "ts": iso(r["received_at"]),
+            "seq": r["seq"],
+        })
+    # 补 logged 但 addressed_to_owner=0 的（agent 已记录不需要决策的）
+    logged = conn.execute(
+        """SELECT id,channel_id,summary,created_at,thread_id FROM notify_items
+           WHERE state='logged' AND created_at>=? AND addressed_to_owner=0
+           ORDER BY id DESC LIMIT 30""",
+        (since_ts,)).fetchall()
+    for r in logged:
+        items.append({
+            "source": r["channel_id"],
+            "summary": str(r["summary"] or "(无摘要)")[:200],
+            "ts": iso(r["created_at"]),
+            "thread_id": r["thread_id"],
+            "logged": True,
+        })
+    # 按时间倒序
+    items.sort(key=lambda x: x.get("ts") or "", reverse=True)
+    return items[:30]
+
+def _digest_card_decision(conn: sqlite3.Connection) -> list:
+    """P1-S6 卡片 B：等你回应——state=awaiting_feedback（按 priority desc, id asc）。"""
+    rows = conn.execute(
+        """SELECT * FROM notify_items WHERE state='awaiting_feedback'
+           ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,
+                    id LIMIT 10""").fetchall()
+    return [{
+        "id": r["id"], "priority": r["priority"],
+        "addressed_to_owner": bool(r["addressed_to_owner"]) if "addressed_to_owner" in r.keys() else False,
+        "summary": r["summary"],
+        "options": json.loads(r["options"] or "[]"),
+        "thread_id": r["thread_id"],
+        "kind": r["kind"] if "kind" in r.keys() else "normal",
+        "created_at": iso(r["created_at"]),
+    } for r in rows]
+
+@app.get("/v2/digest/today")
+def digest_today(dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """P1-S6 真 digest（docs/12 §2 今日视图三卡片 A/B/C；契约 §App-Web）。
+    卡片 A 已做：events 近 24h + logged 非主人专属项
+    卡片 B 等你回应：state=awaiting_feedback，按 priority 排序
+    卡片 C 想问你的：暂留空（等核心 agent 接入后再实现，结构保留）
+    counters: events_today / threads_active / awaiting_feedback (= awaiting_decision) /
+              awaiting_owner / needs_feedback（awaiting_feedback 与 awaiting_decision 同值，
+              App 端友好降级互认）"""
+    conn = db()
+    since_ts = now() - 86400
+    card_a = _digest_card_done(conn, since_ts)
+    card_b = _digest_card_decision(conn)
+    # 卡片 C：暂时填空数组（结构保留，等核心 agent 接入后再实现）
+    card_c = {"items": []}
+    events_today = conn.execute(
+        "SELECT COUNT(*) c FROM events WHERE received_at>=?", (since_ts,)).fetchone()["c"]
+    threads_active = conn.execute(
+        """SELECT COUNT(*) c FROM notify_threads
+           WHERE id IN (SELECT DISTINCT thread_id FROM notify_items
+                        WHERE state IN ('queued','awaiting_feedback') AND thread_id IS NOT NULL)"""
+    ).fetchone()["c"]
+    awaiting_count = conn.execute(
+        "SELECT COUNT(*) c FROM notify_items WHERE state='awaiting_feedback'"
+    ).fetchone()["c"]
+    awaiting_owner = conn.execute(
+        "SELECT COUNT(*) c FROM notify_items WHERE addressed_to_owner=1 AND state IN ('queued','awaiting_feedback')"
+    ).fetchone()["c"]
+    needs_feedback = conn.execute(
+        "SELECT COUNT(*) c FROM notify_items WHERE requires_feedback=1 AND state IN ('queued','awaiting_feedback')"
+    ).fetchone()["c"]
+    conn.close()
+    return {
+        "date": datetime.fromtimestamp(now(), timezone.utc).strftime("%Y-%m-%d"),
+        "generated_at": iso(now()),
+        "card_a_done": {"title": "今日已发生", "items": card_a},
+        "card_b_decision": {"title": "等你回应", "items": card_b},
+        "card_c_ask": {"title": "想问你的", "items": card_c["items"]},
+        "counters": {
+            "events_today": events_today,
+            "threads_active": threads_active,
+            "awaiting_feedback": awaiting_count,    # App 端读法 1
+            "awaiting_decision": awaiting_count,    # App 端读法 2（同名同值，友好降级）
+            "awaiting_owner": awaiting_owner,
+            "needs_feedback": needs_feedback,
+        },
+    }
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)  # root 无 handler 时 INFO 会被吞（lastResort 只收 WARNING+）

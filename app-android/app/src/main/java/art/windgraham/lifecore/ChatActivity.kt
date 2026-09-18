@@ -84,29 +84,30 @@ class ChatActivity : AppCompatActivity() {
         PairStore.init(this)
         setContentView(R.layout.activity_chat)
         val toolbar = findViewById<MaterialToolbar>(R.id.toolbar)
-        toolbar.setNavigationOnClickListener { finish() }
+        toolbar?.setNavigationOnClickListener { finish() }
 
         sid = intent.getStringExtra("session_id") ?: ""
 
         val rv = findViewById<RecyclerView>(R.id.chatRv)
         adapter = MsgAdapter()
-        rv.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
-        rv.adapter = adapter
+        rv?.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
+        rv?.adapter = adapter
 
         val input = findViewById<EditText>(R.id.chatInput)
-        findViewById<MaterialButton>(R.id.btnSend).setOnClickListener {
-            val text = input.text.toString().trim()
+        val btnSend = findViewById<MaterialButton>(R.id.btnSend)
+        btnSend?.setOnClickListener {
+            val text = input?.text?.toString()?.trim().orEmpty()
             if (text.isEmpty()) return@setOnClickListener
-            input.setText("")
+            input?.setText("")
             send(text)
         }
-        findViewById<ImageButton>(R.id.btnMic).setOnClickListener { toggleRecord() }
+        findViewById<ImageButton>(R.id.btnMic)?.setOnClickListener { toggleRecord() }
 
         if (sid.isBlank()) {
             // 兜底：列出 session 选择（设计原则 6：未配对/无 sid 仍可用）
-            listSessionsAndPick(toolbar)
+            toolbar?.let { listSessionsAndPick(it) }
         } else {
-            toolbar.title = intent.getStringExtra("title") ?: sid
+            toolbar?.title = intent.getStringExtra("title") ?: sid
             loadHistory()
         }
     }
@@ -333,7 +334,7 @@ class ChatActivity : AppCompatActivity() {
                 val (code, text) = Api.call("POST", "/v2/asr", raw = f.readBytes(), contentType = "audio/mp4")
                 if (code !in 200..299) throw Api.ApiException(code, text)
                 val stt = JSONObject(text).optString("text")
-                main.post { findViewById<EditText>(R.id.chatInput).setText(stt) }
+                main.post { findViewById<EditText>(R.id.chatInput)?.setText(stt) }
             } catch (e: Exception) {
                 main.post { Toast.makeText(this, Api.errText(e), Toast.LENGTH_LONG).show() }
             } finally {
@@ -369,8 +370,8 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun scroll() {
-        findViewById<RecyclerView>(R.id.chatRv).post {
-            findViewById<RecyclerView>(R.id.chatRv).scrollToPosition(maxOf(0, msgs.size - 1))
+        findViewById<RecyclerView>(R.id.chatRv)?.post {
+            findViewById<RecyclerView>(R.id.chatRv)?.scrollToPosition(maxOf(0, msgs.size - 1))
         }
     }
 

@@ -6,8 +6,10 @@
  * register flow. POST /v1/channels returns ingest_url + secret, displayed
  * inline with a CopyButton helper.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Copy, Plus, Radio, TestTube, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Copy, Plus, TestTube, Trash2, X } from "lucide-react";
+import type { LcBridgeHealthEntry } from "@/lib/lifecore-api";
+import type { LifecoreTranslations } from "@/i18n/lifecore";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import {
@@ -55,11 +57,48 @@ const UPLINK_LEVELS = [
   { value: "A", label: "仅 A 级" },
 ];
 
+function healthChipTone(
+  status: LcBridgeHealthEntry["status"] | undefined,
+): "success" | "warning" | "destructive" | "outline" {
+  switch (status) {
+    case "active":
+      return "success";
+    case "stale":
+      return "warning";
+    case "silent":
+      return "warning";
+    case "revoked":
+      return "destructive";
+    default:
+      return "outline";
+  }
+}
+
+function healthChipLabel(
+  status: LcBridgeHealthEntry["status"] | undefined,
+  copy?: LifecoreTranslations["bridge"],
+): string {
+  if (!status) return copy?.healthLoading ?? "…";
+  switch (status) {
+    case "active":
+      return copy?.healthActive ?? "active";
+    case "stale":
+      return copy?.healthStale ?? "stale > 1h";
+    case "silent":
+      return copy?.healthSilent ?? "silent > 24h";
+    case "revoked":
+      return copy?.healthRevoked ?? "revoked";
+  }
+}
+
 export default function ChannelsPage() {
   const { t } = useI18n();
   const { toast, showToast } = useToast();
   const { setEnd } = usePageHeader();
   const [channels, setChannels] = useState<LcChannel[]>([]);
+  const [healthByChannel, setHealthByChannel] = useState<
+    Record<string, LcBridgeHealthEntry>
+  >({});
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -86,6 +125,15 @@ export default function ChannelsPage() {
       setChannels(r.channels ?? []);
     } catch (e) {
       showToast(errorMessage(e), "error");
+    }
+    // P1-S5 — health is best-effort; never block the channel list
+    try {
+      const h = await lifecoreApi.getBridgeHealth();
+      const map: Record<string, LcBridgeHealthEntry> = {};
+      for (const e of h.channels ?? []) map[e.channel_id] = e;
+      setHealthByChannel(map);
+    } catch {
+      /* leave healthByChannel empty; UI shows "…" placeholder */
     } finally {
       setLoading(false);
     }
@@ -194,12 +242,45 @@ export default function ChannelsPage() {
                     {c.revoked && (
                       <Badge tone="destructive">revoked</Badge>
                     )}
+                    <Badge tone={healthChipTone(healthByChannel[c.channel_id]?.status)}>
+                      {healthChipLabel(
+                        healthByChannel[c.channel_id]?.status,
+                        t.lifecore?.bridge,
+                      )}
+                    </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {c.channel_id}
                     {c.created_at
                       ? ` · ${new Date(c.created_at * 1000).toLocaleString()}`
                       : ""}
+                    {healthByChannel[c.channel_id] && (
+                      <>
+                        {" · "}
+                        {(t.lifecore?.bridge?.lastEventAt ?? "last event") +
+                          ": " +
+                          (healthByChannel[c.channel_id].last_received_at
+                            ? new Date(
+                                healthByChannel[c.channel_id].last_received_at! *
+                                  1000,
+                              ).toLocaleString()
+                            : (t.lifecore?.bridge?.neverSeen ?? "never"))}
+                        {" · "}
+                        {(t.lifecore?.bridge?.count24h ?? "24h") +
+                          ": " +
+                          String(
+                            healthByChannel[c.channel_id].events_24h ?? 0,
+                          )}
+                        {healthByChannel[c.channel_id].last_upstream_status
+                          ? " · " +
+                            (t.lifecore?.bridge?.upstreamStatus ?? "upstream") +
+                            ": " +
+                            String(
+                              healthByChannel[c.channel_id].last_upstream_status,
+                            )
+                          : ""}
+                      </>
+                    )}
                   </p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">

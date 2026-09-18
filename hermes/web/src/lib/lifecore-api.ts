@@ -92,9 +92,88 @@ export interface LcNotifyItem {
   channel_id?: string;
   summary?: string;
   options?: string[];
+  /** Raw server payload — used by AllItemsPage / OwnerOnlyPage which render
+   *  full row metadata (state / priority / created_at / addressed_to_owner / thread_id / kind). */
+  state?: string;
+  priority?: string;
+  created_at?: number;
+  resolved_at?: number;
+  thread_id?: string | number;
+  thread_title?: string;
+  kind?: string;
+  addressed_to_owner?: boolean | number;
+  generation?: number;
+  resolution?: string;
+  requires_feedback?: boolean | number;
+  event_seq?: number;
 }
 
 export type NotifyAction = "snooze" | "dismissed" | "actioned";
+
+export interface LcNotifyItemPage {
+  items: LcNotifyItem[];
+  total?: number;
+  /** Present when server paginates; informational — clients keep loading by bumping limit. */
+  next_cursor?: string | null;
+}
+
+export interface LcEvent {
+  seq: number;
+  channel_id: string;
+  payload: string;
+  upstream_status?: string | null;
+  received_at: number;
+}
+
+export interface LcEventsPage {
+  events: LcEvent[];
+  next_seq?: number | null;
+}
+
+export interface LcBridgeHealthEntry {
+  /** Channel id this row describes. */
+  channel_id: string;
+  /** Channel display name (from channels table). */
+  name?: string;
+  /** Health classification: "active" | "stale" | "silent" | "revoked". */
+  status: "active" | "stale" | "silent" | "revoked";
+  /** Seconds since the most recent event. -1 when unknown / no events. */
+  age_seconds: number | null;
+  /** 24h event count. */
+  events_24h: number;
+  /** Last upstream_status string ("200:OK" / "502:hermes_unreachable: …" / etc). */
+  last_upstream_status?: string | null;
+  /** Last event seq (when status === "active"). */
+  last_event_seq?: number | null;
+  /** Last event received_at (epoch seconds). */
+  last_received_at?: number | null;
+}
+
+export interface LcBridgeHealthResp {
+  channels: LcBridgeHealthEntry[];
+  generated_at: number;
+}
+
+/* ── digest (P1-S6 — `/v2/digest/today`) ── */
+
+export interface LcDigestCard {
+  items: LcNotifyItem[];
+  total?: number;
+}
+
+export interface LcDigestToday {
+  generated_at: number;
+  counters: {
+    events_today: number;
+    threads_active: number;
+    awaiting_owner: number;
+    needs_feedback: number;
+    [k: string]: number;
+  };
+  card_a_done: LcDigestCard;
+  card_b_decision: LcDigestCard;
+  card_c_ask: LcDigestCard;
+}
 
 export interface LcChannel {
   name: string;
@@ -181,6 +260,53 @@ export const lifecoreApi = {
     });
   },
 
+  /** P0-S1: All notify items — full-state listing.
+   *
+   *   state           — optional. omit / "all" = server-default (typically logged|queued|awaiting_feedback|resolved).
+   *   addressedToOwner — when true, server filters to items flagged for owner-only attention.
+   *   limit           — cap; server defaults to 200 when absent.
+   */
+  async getAllItems(
+    state?: string,
+    addressedToOwner?: boolean,
+    limit?: number,
+  ): Promise<LcNotifyItemPage> {
+    const qs = new URLSearchParams();
+    if (state && state !== "all") qs.set("state", state);
+    if (addressedToOwner === true) qs.set("addressed_to_owner", "1");
+    if (typeof limit === "number") qs.set("limit", String(limit));
+    const path =
+      qs.toString().length > 0
+        ? `/v2/notify/all?${qs.toString()}`
+        : "/v2/notify/all";
+    return lcFetch<LcNotifyItemPage>(path);
+  },
+
+  /** P1-S3: thread timeline — the full ordered list of items belonging to a single thread. */
+  async getThreadTimeline(threadId: string | number): Promise<LcNotifyItemPage> {
+    return lcFetch<LcNotifyItemPage>(
+      `/v2/threads/${encodeURIComponent(String(threadId))}/timeline`,
+    );
+  },
+
+  /** P1-S3: list threads (used by NotifyPage to render per-row "timeline" buttons). */
+  async listThreads(limit?: number): Promise<{
+    threads?: Array<{
+      id?: string | number;
+      thread_id?: string | number;
+      title?: string;
+      channel_id?: string;
+      item_count?: number;
+      last_resolution?: string;
+      last_resolved_at?: number;
+      snoozed_until?: number;
+      updated_at?: number;
+    }>;
+  }> {
+    const qs = typeof limit === "number" ? `?limit=${limit}` : "";
+    return lcFetch(`/v2/notify/threads${qs}`);
+  },
+
   /* Channels */
   async listChannels(): Promise<{ channels: LcChannel[] }> {
     return lcFetch<{ channels: LcChannel[] }>("/v1/channels");
@@ -210,6 +336,26 @@ export const lifecoreApi = {
     });
   },
 
+  /** P0-S2: raw event stream. Incremental pull: pass sinceSeq=prevMaxSeq to fetch only newer rows. */
+  async getEvents(
+    channelId?: string,
+    sinceSeq?: number,
+    limit?: number,
+  ): Promise<LcEventsPage> {
+    const qs = new URLSearchParams();
+    if (channelId) qs.set("channel_id", channelId);
+    if (typeof sinceSeq === "number") qs.set("since_seq", String(sinceSeq));
+    if (typeof limit === "number") qs.set("limit", String(limit));
+    const path =
+      qs.toString().length > 0 ? `/v2/events?${qs.toString()}` : "/v2/events";
+    return lcFetch<LcEventsPage>(path);
+  },
+
+  /** P1-S5: per-channel bridge health (last_event_at / upstream_status / event_count). */
+  async getBridgeHealth(): Promise<LcBridgeHealthResp> {
+    return lcFetch<LcBridgeHealthResp>("/v2/bridge/health");
+  },
+
   /* Jobs (cron) */
   async listJobs(): Promise<{ jobs?: LcJob[]; data?: LcJob[] } | LcJob[]> {
     return lcFetch("/v2/jobs");
@@ -226,6 +372,12 @@ export const lifecoreApi = {
 
   async stateBlock(): Promise<LcStateBlock> {
     return lcFetch<LcStateBlock>("/v2/state-block");
+  },
+
+  /** P1-S6: today's digest (3 cards A/B/C + counters). Server aggregates
+   *  events + notify_items + user_state into a single response. */
+  async getDigestToday(): Promise<LcDigestToday> {
+    return lcFetch<LcDigestToday>("/v2/digest/today");
   },
 
   /* TTS — returns audio blob for the caller to play */

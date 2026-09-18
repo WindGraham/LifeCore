@@ -11,6 +11,7 @@ import type { Translations } from "./types";
 
 export interface LifecoreTranslations {
   common?: Translations["common"];
+  open?: string;
   voice?: {
     on: string;
     off: string;
@@ -126,6 +127,102 @@ export interface LifecoreTranslations {
     unpairConfirmDesc: string;
     unpaired: string;
   };
+  /** P0-S1 — AllItemsPage */
+  all?: {
+    title: string;
+    subtitle: string;
+    empty: string;
+    columns: {
+      summary: string;
+      priority: string;
+      state: string;
+      channel: string;
+      createdAt: string;
+      ownerOnly: string;
+    };
+    stateLabels: {
+      logged: string;
+      queued: string;
+      awaiting_feedback: string;
+      resolved: string;
+    };
+  };
+  /** P0-S2 — EventsPage */
+  events?: {
+    title: string;
+    subtitle: string;
+    channelLabel: string;
+    channelAll: string;
+    columns: {
+      seq: string;
+      channel: string;
+      payload: string;
+      receivedAt: string;
+    };
+    pullNew: string;
+    empty: string;
+    maxSeq: string;
+  };
+  /** P1-S3 — NotifyPage timeline dialog */
+  timeline?: {
+    title: string;
+    open: string;
+    empty: string;
+    loading: string;
+    threadPrefix: string;
+  };
+  /** P1-S4 — OwnerOnlyPage */
+  owner?: {
+    title: string;
+    subtitle: string;
+    empty: string;
+    feedback: string;
+    feedbackSnooze: string;
+    feedbackDismissed: string;
+    feedbackActioned: string;
+  };
+  /** P1-S5 — ChannelsPage health chip */
+  bridge?: {
+    healthTitle: string;
+    healthActive: string;
+    healthStale: string;
+    healthSilent: string;
+    healthRevoked: string;
+    healthLoading: string;
+    lastEventAt: string;
+    neverSeen: string;
+    count24h: string;
+    upstreamStatus: string;
+  };
+  /** P1-S6 — TodayPage real digest */
+  digest?: {
+    countersTitle: string;
+    counterEvents: string;
+    counterThreads: string;
+    counterAwaitingOwner: string;
+    counterNeedsFeedback: string;
+    cardA: string;
+    cardB: string;
+    cardC: string;
+    empty: string;
+    askReplyPlaceholder: string;
+    askReplySend: string;
+  };
+  /** Shared filter copy */
+  filter?: {
+    state: {
+      logged: string;
+      queued: string;
+      awaiting_feedback: string;
+      resolved: string;
+      all: string;
+    };
+    priority: {
+      high: string;
+      normal: string;
+      all: string;
+    };
+  };
 }
 
 /** English LC strings — fallback when locale isn't `zh*`. */
@@ -172,10 +269,10 @@ export const enLc: LifecoreTranslations = {
     expand: "Expand",
     general: "General",
     messaging: "Messaging",
-    open: "Open",
     pluginLoadFailed: "Plugin failed to load",
     pluginNotRegistered: "Plugin not registered",
   },
+  open: "Open",
   voice: {
     on: "Voice on",
     off: "Voice off",
@@ -296,11 +393,111 @@ export const enLc: LifecoreTranslations = {
       "This browser immediately loses access. The action cannot be undone.",
     unpaired: "Unpaired",
   },
+  // P0-S1 — AllItemsPage
+  all: {
+    title: "All items",
+    subtitle:
+      "Every notify_item across all states. Click a row to open the thread timeline.",
+    empty: "No items in this state",
+    columns: {
+      summary: "Summary",
+      priority: "Priority",
+      state: "State",
+      channel: "Channel",
+      createdAt: "Created",
+      ownerOnly: "Owner only",
+    },
+    stateLabels: {
+      logged: "logged",
+      queued: "queued",
+      awaiting_feedback: "awaiting_feedback",
+      resolved: "resolved",
+    },
+  },
+  // P0-S2 — EventsPage
+  events: {
+    title: "Event stream",
+    subtitle:
+      "Raw events as they land on the server — useful for tracing channel → notify_items.",
+    channelLabel: "Channel",
+    channelAll: "All channels",
+    columns: {
+      seq: "seq",
+      channel: "channel",
+      payload: "payload",
+      receivedAt: "received_at",
+    },
+    pullNew: "Pull new (since max seq)",
+    empty: "No events for this filter",
+    maxSeq: "max seq",
+  },
+  // P1-S3 — NotifyPage timeline dialog
+  timeline: {
+    title: "Thread timeline",
+    open: "Timeline",
+    empty: "No items in this thread",
+    loading: "Loading timeline…",
+    threadPrefix: "thread",
+  },
+  // P1-S4 — OwnerOnlyPage
+  owner: {
+    title: "Owner-only",
+    subtitle:
+      "Items flagged for your eyes only — high-priority / awaiting your decision.",
+    empty: "No owner-only items right now",
+    feedback: "Feedback",
+    feedbackSnooze: "Snooze",
+    feedbackDismissed: "Dismiss",
+    feedbackActioned: "Action",
+  },
+  // P1-S5 — ChannelsPage health chip
+  bridge: {
+    healthTitle: "Health",
+    healthActive: "active",
+    healthStale: "stale > 1h",
+    healthSilent: "silent > 24h",
+    healthRevoked: "revoked",
+    healthLoading: "…",
+    lastEventAt: "last event",
+    neverSeen: "never",
+    count24h: "24h",
+    upstreamStatus: "upstream",
+  },
+  // P1-S6 — TodayPage real digest
+  digest: {
+    countersTitle: "Today's pulse",
+    counterEvents: "events today",
+    counterThreads: "active threads",
+    counterAwaitingOwner: "awaiting you",
+    counterNeedsFeedback: "needs feedback",
+    cardA: "Happened today",
+    cardB: "Your turn",
+    cardC: "Asks for you",
+    empty: "Nothing here yet",
+    askReplyPlaceholder: "Reply…",
+    askReplySend: "Send",
+  },
+  // Shared filter copy
+  filter: {
+    state: {
+      logged: "Logged",
+      queued: "Queued",
+      awaiting_feedback: "Awaiting you",
+      resolved: "Resolved",
+      all: "All",
+    },
+    priority: {
+      high: "High priority",
+      normal: "Normal",
+      all: "All priorities",
+    },
+  },
 };
 
 /** Simplified Chinese LC strings. */
 export const zhLc: LifecoreTranslations = {
   common: enLc.common, // LC UI 中文也直接复用英文 common 兜底
+  open: "打开",
   voice: {
     on: "播报已开",
     off: "播报已关",
@@ -415,5 +612,101 @@ export const zhLc: LifecoreTranslations = {
     unpairConfirmTitle: "解除配对？",
     unpairConfirmDesc: "本浏览器将立即失去访问权限。继续操作无法撤销。",
     unpaired: "已解除配对",
+  },
+  // P0-S1 — AllItemsPage
+  all: {
+    title: "全部事项",
+    subtitle: "所有 notify_item 的全 state 视图。点击行打开 thread 时间线。",
+    empty: "该 state 下没有事项",
+    columns: {
+      summary: "摘要",
+      priority: "优先级",
+      state: "状态",
+      channel: "通道",
+      createdAt: "创建时间",
+      ownerOnly: "主人专属",
+    },
+    stateLabels: {
+      logged: "已记录",
+      queued: "排队中",
+      awaiting_feedback: "等你决策",
+      resolved: "已处理",
+    },
+  },
+  // P0-S2 — EventsPage
+  events: {
+    title: "事件流",
+    subtitle: "服务端接收到的原始事件流，可用于追溯通道→事项链路。",
+    channelLabel: "通道",
+    channelAll: "全部通道",
+    columns: {
+      seq: "序号",
+      channel: "通道",
+      payload: "载荷",
+      receivedAt: "接收时间",
+    },
+    pullNew: "增量拉新（since 当前 max seq）",
+    empty: "该过滤下暂无事件",
+    maxSeq: "最大 seq",
+  },
+  // P1-S3 — NotifyPage 时间线弹窗
+  timeline: {
+    title: "议题时间线",
+    open: "时间线",
+    empty: "该议题暂无事项",
+    loading: "加载时间线中…",
+    threadPrefix: "议题",
+  },
+  // P1-S4 — OwnerOnlyPage
+  owner: {
+    title: "我的专属",
+    subtitle: "标记给你的事项——高优先级 / 等你决策。",
+    empty: "当前无主人专属事项",
+    feedback: "反馈",
+    feedbackSnooze: "稍后",
+    feedbackDismissed: "忽略",
+    feedbackActioned: "已办",
+  },
+  // P1-S5 — ChannelsPage 健康度
+  bridge: {
+    healthTitle: "健康度",
+    healthActive: "活跃",
+    healthStale: "静默>1h",
+    healthSilent: "静默>24h",
+    healthRevoked: "已吊销",
+    healthLoading: "…",
+    lastEventAt: "最后事件",
+    neverSeen: "从未",
+    count24h: "24h",
+    upstreamStatus: "上游",
+  },
+  // P1-S6 — TodayPage 真 digest
+  digest: {
+    countersTitle: "今日脉搏",
+    counterEvents: "今日事件",
+    counterThreads: "活跃议题",
+    counterAwaitingOwner: "待你回应",
+    counterNeedsFeedback: "等你决策",
+    cardA: "今日已发生",
+    cardB: "等你回应",
+    cardC: "想问你的",
+    empty: "暂无内容",
+    askReplyPlaceholder: "回复…",
+    askReplySend: "发送",
+  },
+  // 共享 filter 文案
+  filter: {
+    state: {
+      logged: "已记录",
+      queued: "排队中",
+      awaiting_feedback: "等你决策",
+      resolved: "已处理",
+      all: "全部",
+    },
+    priority: {
+      high: "高优先级",
+      normal: "普通",
+      all: "全部优先级",
+    },
   },
 };

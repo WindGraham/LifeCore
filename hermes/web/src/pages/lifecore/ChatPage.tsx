@@ -23,8 +23,6 @@ import { Button } from "@nous-research/ui/ui/components/button";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "@nous-research/ui/ui/components/card";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Input } from "@nous-research/ui/ui/components/input";
@@ -32,7 +30,7 @@ import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Toast } from "@nous-research/ui/ui/components/toast";
 import { useToast } from "@nous-research/ui/hooks/use-toast";
 import { useI18n } from "@/i18n";
-import { errorMessage, lifecoreApi } from "@/lib/lifecore-api";
+import { errorMessage, lifecoreApi, type LcSession } from "@/lib/lifecore-api";
 import { useVoiceConsent } from "@/hooks/useVoiceConsent";
 import { VoiceConsentBanner } from "@/components/lifecore/VoiceConsentBanner";
 

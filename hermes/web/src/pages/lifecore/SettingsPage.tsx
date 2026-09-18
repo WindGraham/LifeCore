@@ -8,6 +8,7 @@
  * Unpair uses ConfirmDialog (destructive) per docs/17 §4.4.
  */
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router";
 import {
   AudioLines,
   ExternalLink,
@@ -65,7 +66,7 @@ export default function SettingsPage() {
   const [ttsText, setTtsText] = useState("你好，这是 LifeCore 语音播报测试。");
   const [ttsBusy, setTtsBusy] = useState(false);
   const [confirmUnpair, setConfirmUnpair] = useState(false);
-  const [recording, setRecording] = useState(false);
+  const [recording] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -275,18 +276,17 @@ export default function SettingsPage() {
             {copy?.asrDesc ??
               "打开 ChatPage，使用输入框旁的麦克风按钮录制语音。"}
           </p>
-          <Button
-            ghost
-            size="sm"
-            className="mt-2 uppercase"
-            onClick={handleAsrTest}
-            asChild
-          >
-            <a href="/lc-chat">
+          <Link to="/lc-chat" className="mt-2 inline-block">
+            <Button
+              ghost
+              size="sm"
+              className="uppercase"
+              onClick={handleAsrTest}
+            >
               <ExternalLink className="mr-1 h-3.5 w-3.5" />
               {copy?.asrCta ?? "前往 ChatPage"}
-            </a>
-          </Button>
+            </Button>
+          </Link>
         </CardContent>
       </Card>
 

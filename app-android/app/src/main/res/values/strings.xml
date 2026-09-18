@@ -8,6 +8,8 @@
     <string name="nav_close_drawer">关闭抽屉</string>
     <string name="nav_today">今日</string>
     <string name="nav_notify">通知</string>
+    <string name="nav_owner">📬 我的专属</string>
+    <string name="nav_events">📊 事件流</string>
     <string name="nav_sessions">对话</string>
     <string name="nav_channels">通道</string>
     <string name="nav_jobs">任务</string>
@@ -19,10 +21,14 @@
     <!-- 标题 -->
     <string name="title_today">今日</string>
     <string name="title_notify">通知</string>
+    <string name="title_owner">我的专属</string>
+    <string name="title_events">事件流</string>
+    <string name="title_all_items">全部事项</string>
     <string name="title_channels">通道</string>
     <string name="title_jobs">任务</string>
     <string name="title_settings">设置</string>
     <string name="title_thread">事项线程</string>
+    <string name="title_thread_timeline">链路时间线</string>
 
     <!-- 通知页 -->
     <string name="btn_autoplay_on">⏹ 停止自动播报</string>
@@ -43,4 +49,16 @@
     <string name="unpaired_title">未配对</string>
     <string name="unpaired_desc">用 LifeCore App 扫码；扫描完成后此页会自动激活。</string>
     <string name="btn_pair_now">现在配对</string>
+
+    <!-- P0-S1 AllItemsFragment -->
+    <string name="tab_all">全部</string>
+    <string name="tab_awaiting">待决</string>
+    <string name="tab_logged">已记录</string>
+    <string name="tab_resolved">已处理</string>
+
+    <!-- P1-S5 channel health -->
+    <string name="health_active">● 在线</string>
+    <string name="health_stale">● 过期</string>
+    <string name="health_silent">● 沉默</string>
+    <string name="health_revoked">● 已撤销</string>
 </resources>

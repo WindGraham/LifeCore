@@ -44,7 +44,32 @@ class ThreadDetailActivity : AppCompatActivity() {
         adapter = buildAdapter()
         rv.layoutManager = LinearLayoutManager(this)
         rv.adapter = adapter
+        // P1-S3：header 增加"查看 timeline"按钮 —— 复用 thread items（resolved + resume 全包含）
+        findViewById<MaterialButton>(R.id.btnTimeline)?.setOnClickListener { loadTimeline() }
         load()
+    }
+
+    /** P1-S3：链路全景——展示 thread 全部 items（包含 resolved + resume）。 */
+    private fun loadTimeline() {
+        if (tid < 0) return
+        Thread {
+            try {
+                val r = Api.threadTimeline(tid.toLong())
+                val got = Api.arr(r, "items")
+                main.post {
+                    val list = mutableListOf<JSONObject>()
+                    for (k in 0 until got.length()) list.add(got.getJSONObject(k))
+                    // 排序按 id（旧→新阅读顺序）
+                    list.sortBy { it.optInt("id", 0) }
+                    rows.clear(); rows.addAll(list)
+                    adapter.notifyDataSetChanged()
+                    renderOptions()
+                    toolbar.title = getString(R.string.title_thread_timeline) + " #$tid（${list.size}条）"
+                }
+            } catch (e: Exception) {
+                main.post { Toast.makeText(this, Api.errText(e), Toast.LENGTH_LONG).show() }
+            }
+        }.start()
     }
 
     private fun buildAdapter(): RecyclerView.Adapter<RecyclerView.ViewHolder> {

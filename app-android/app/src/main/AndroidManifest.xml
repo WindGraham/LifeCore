@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- #d6a8dfc7：Android 14 doze 模式下 setExactAndAllowWhileIdle 需要 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:label="@string/app_name"
@@ -41,6 +43,9 @@
 
         <service android:name=".PlayService" android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- #d6a8dfc7：WS alarm 重连接收器（doze 模式保活） -->
+        <receiver android:name=".ReconnectReceiver" android:exported="false" />
 
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>

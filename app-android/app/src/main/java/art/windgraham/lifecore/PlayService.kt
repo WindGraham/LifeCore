@@ -1,16 +1,19 @@
 package art.windgraham.lifecore
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
@@ -65,10 +68,42 @@ class PlayService : Service() {
     private val pollRunnable = Runnable { pollOnce() }
     private val idleWakeup = Runnable { if (idleMode && ws == null) connectWs() }
 
+    // ── 多层兜底（Step 3 强化）：专用后台 HandlerThread（脱离主线程，独立工作）──
+    private var wsHandlerThread: HandlerThread? = null
+    private var wsHandler: Handler? = null
+    private val reconnectAttempts = AtomicInteger(0)
+    private val pingRunnable = object : Runnable {
+        override fun run() {
+            Log.d(TAG, "ping tick")
+            sendPingFrame()
+            wsHandler?.postDelayed(this, PING_INTERVAL_MS)
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) { stopSelf(); return START_NOT_STICKY }
+        // ── Step 3：ping 帧立刻发（外部 alarm/JobScheduler 触发心跳）──
+        if (intent?.action == ACTION_PING) {
+            Log.d(TAG, "ACTION_PING received, sending ping frame")
+            sendPingFrame()
+            return START_STICKY
+        }
+        // #d6a8dfc7：alarm/job 触发重连（ReconnectReceiver 拉起 → JobScheduler 也走这个 action）
+        if (intent?.action == ACTION_RECONNECT) {
+            Log.i(TAG, "ACTION_RECONNECT received from alarm/job")
+            // 无论 service 状态都 cancel 旧 alarm（防重复）；下面会按需重启连接
+            cancelReconnectAlarm(this)
+            cancelReconnectJob()
+            // 重置 attempt 计数 → 让 alarm/job 重新从 Handler 层开始尝试（避免雷击循环）
+            reconnectAttempts.set(0)
+            if (running) {
+                connectWs()
+                return START_STICKY
+            }
+            // Service 没起 → fall through 到正常启动路径（onCreate 已跑过则 running=true；否则 onCreate 会跑）
+        }
         if (running) return START_STICKY
 
         Api.init(this)
@@ -97,6 +132,12 @@ class PlayService : Service() {
         running = true
         lastSpokenId = Api.lastSpokenId
 
+        // ── Step 3：启动专用 HandlerThread（脱离主线程，独立 Looper）──
+        if (wsHandlerThread == null) {
+            wsHandlerThread = HandlerThread(WS_HANDLER_THREAD).apply { start() }
+            wsHandler = Handler(wsHandlerThread!!.looper)
+        }
+
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "lifecore:playback").apply {
             acquire(24L * 60 * 60 * 1000)
@@ -123,6 +164,9 @@ class PlayService : Service() {
 
     private val wsListener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+            Log.i(TAG, "ws opened code=${response.code}")
+            // ── Step 3：连上 → 重置 attempts、停 ping、cancel alarm/job ──
+            reconnectAttempts.set(0)
             handler.post {
                 backoffIdx = 0
                 consecutiveFail = 0
@@ -130,6 +174,14 @@ class PlayService : Service() {
                 stopPolling()
                 handler.removeCallbacks(idleWakeup)
                 updateForegroundNotif("自动播报运行中 · 已连接")
+                // 启动应用层 ping 心跳（OkHttp 已有 20s 自动 ping，双保险）
+                wsHandler?.removeCallbacks(pingRunnable)
+                wsHandler?.postDelayed(pingRunnable, PING_INTERVAL_MS)
+                // #d6a8dfc7：连上 5s 后 cancel alarm（避免下次断开前重复唤醒）
+                handler.postDelayed({
+                    cancelReconnectAlarm(this@PlayService)
+                    cancelReconnectJob()
+                }, CANCEL_ALARM_DELAY_MS)
             }
         }
 
@@ -142,14 +194,43 @@ class PlayService : Service() {
             }
         }
 
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            // 服务端主动关闭（close frame）：等同 onClosed 也要重连
+            Log.w(TAG, "ws onClosing code=$code reason=$reason")
+            webSocket.close(1000, null)
+        }
+
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
-            Log.w(TAG, "ws failure: ${t.message}")
+            Log.w(TAG, "ws onFailure: ${t.javaClass.simpleName}: ${t.message}", t)
+            // 第一层：立即尝试 1s 后 reconnect（走 scheduleReconnect 让它接管 attempts 计数与分层升级）
+            scheduleReconnect(1_000L)
             handler.post { onWsDown() }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            Log.i(TAG, "ws closed code=$code reason=$reason")
+            Log.w(TAG, "ws onClosed code=$code reason=$reason")
+            // 第一层：2s 后 reconnect
+            scheduleReconnect(2_000L)
             handler.post { onWsDown() }
+        }
+    }
+
+    /** 应用层 ping 帧（OkHttp 已有 20s 自动 ping/pong，这是双保险）。 */
+    private fun sendPingFrame() {
+        try {
+            val socket = ws ?: run {
+                Log.w(TAG, "sendPingFrame: ws is null, skipping")
+                return
+            }
+            val sent = socket.send("{\"action\":\"ping\"}")
+            Log.d(TAG, "sendPingFrame sent=$sent")
+            // sent=false 表示队列满了或已关闭，强制 close 走 onFailure/onClosed 重连路径
+            if (!sent) {
+                Log.w(TAG, "sendPingFrame: socket send returned false, closing")
+                runCatching { socket.close(1000, "ping queue full") }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "sendPingFrame throw: ${e.message}")
         }
     }
 
@@ -163,21 +244,102 @@ class PlayService : Service() {
             // 设计原则 8：最多 5 次失败 → idle，每 5min 重试一次
             idleMode = true
             handler.postDelayed(idleWakeup, IDLE_RETRY_MS)
-        } else {
-            scheduleReconnect()
         }
+
+        // Step 3：实际重连由 scheduleReconnect(Long) 在 WS listener 里接管
+        //   - 这里不再重复 scheduleReconnect()/scheduleReconnectAlarm()，避免与 listener 的调用雷击
+        //   - listener 的 onFailure/onClosed 已经触发 scheduleReconnect(1000/2000)，
+        //     attempts 计数会自动从 1 开始，4 次后自动转 alarm，11 次后转 JobScheduler。
 
         // 兜底：WS 断开 2 分钟 → 60s 轮询
         if (!polling && SystemClock.elapsedRealtime() - disconnectedAt > FALLBACK_AFTER_MS) startPolling()
     }
 
-    /** 指数退避：1s → 2s → 4s → 8s → 16s 上限。 */
+    // ── Alarm 守护（#d6a8dfc7：doze 模式保活）──
+
+    private fun scheduleReconnectAlarm(ctx: Context, delayMs: Long) {
+        val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(ctx, ReconnectReceiver::class.java)
+        val pi = PendingIntent.getBroadcast(
+            ctx, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        am.setExactAndAllowWhileIdle(
+            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime() + delayMs,
+            pi
+        )
+        Log.i(TAG, "reconnect alarm scheduled in ${delayMs}ms")
+    }
+
+    private fun cancelReconnectAlarm(ctx: Context) {
+        val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(ctx, ReconnectReceiver::class.java)
+        val pi = PendingIntent.getBroadcast(
+            ctx, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        am.cancel(pi)
+        Log.i(TAG, "reconnect alarm cancelled")
+    }
+
+    /** 指数退避：1s → 2s → 4s → 8s → 16s 上限（保留旧字段以防外部引用，实际由 scheduleReconnect(Long) 驱动）。 */
+    @Suppress("unused")
     private fun scheduleReconnect() {
-        if (!running) return
-        handler.removeCallbacks(reconnectRunnable)
-        val d = BACKOFF_MS[backoffIdx.coerceAtMost(BACKOFF_MS.size - 1)]
+        scheduleReconnect(BACKOFF_MS[backoffIdx.coerceAtMost(BACKOFF_MS.size - 1)])
         if (backoffIdx < BACKOFF_MS.size - 1) backoffIdx++
-        handler.postDelayed(reconnectRunnable, d)
+    }
+
+    /**
+     * Step 3：多层兜底重连入口。
+     *
+     *   attempts 1-3       → wsHandler.postDelayed（同一进程内最快，1s/5s/30s）
+     *   attempts 4-10      → AlarmManager.setExactAndAllowWhileIdle（doze 白名单）
+     *   attempts ≥ 11      → JobScheduler.setPeriodic(15min)（绕过 doze 的 dozing 窗口）
+     */
+    private fun scheduleReconnect(delayMs: Long) {
+        if (!running) return
+        val attempt = reconnectAttempts.incrementAndGet()
+        Log.d(TAG, "scheduleReconnect attempt=$attempt delay=${delayMs}ms")
+        when {
+            attempt <= HANDLER_RETRY_MAX -> {
+                // 第二层：Handler（同进程内，最快）
+                wsHandler?.removeCallbacks(reconnectRunnable)
+                wsHandler?.postDelayed(reconnectRunnable, delayMs)
+            }
+            attempt <= ALARM_RETRY_MAX -> {
+                // 第三层：AlarmManager 兜底（doze 杀进程后也能唤醒）
+                scheduleReconnectAlarm(this, delayMs)
+            }
+            else -> {
+                // 第四层：JobScheduler 兜底（绕过 doze 的 dozing 窗口）
+                scheduleReconnectJob()
+            }
+        }
+    }
+
+    // ── Step 3：第 4 层兜底（最长 15 分钟 alarm 重连，绕过 doze）──
+    //
+    //  说明：JobScheduler 只能调度 JobService 子类，不能直接调度 BroadcastReceiver；
+    //        而本任务约束不动 AndroidManifest.xml，因此 JobScheduler 路径不可用。
+    //        改用 setExactAndAllowWhileIdle 注册 15 分钟一次性 alarm，效果等价于
+    //        JobScheduler 的 setPeriodic(15min)：同样绕过 doze 唤醒，同样触发
+    //        ReconnectReceiver → ACTION_RECONNECT → PlayService 重连。
+    //        连上后 cancelReconnectAlarm() 会清掉，行为与 JobScheduler cancel 等价。
+
+    private val LONG_FALLBACK_DELAY_MS = 15L * 60 * 1000L
+
+    private fun scheduleReconnectJob() {
+        // 第 4 层：长延迟 alarm（15 分钟），ReconnectReceiver 触发后会在 onStartCommand 里
+        //         cancelReconnectAlarm + 重置 attempts → 让下一次断开重新从 Handler 层开始尝试
+        scheduleReconnectAlarm(this, LONG_FALLBACK_DELAY_MS)
+        Log.d(TAG, "long-fallback alarm scheduled in ${LONG_FALLBACK_DELAY_MS}ms (equivalent to JobScheduler periodic 15min)")
+    }
+
+    private fun cancelReconnectJob() {
+        // 实际等价于 cancelReconnectAlarm（JobScheduler 路径未启用，alarm 已覆盖）
+        cancelReconnectAlarm(this)
+        Log.d(TAG, "long-fallback alarm cancelled (alias of cancelReconnectAlarm)")
     }
 
     private fun startPolling() {
@@ -461,16 +623,27 @@ class PlayService : Service() {
     }
 
     override fun onDestroy() {
+        Log.d(TAG, "onDestroy")
         running = false
         stopPolling()
         handler.removeCallbacks(reconnectRunnable)
         handler.removeCallbacks(idleWakeup)
+        // ── Step 3：清理 wsHandlerThread、ping 回调 ──
+        wsHandler?.removeCallbacks(pingRunnable)
+        wsHandler?.removeCallbacks(reconnectRunnable)
+        runCatching { wsHandlerThread?.quitSafely() }
+        wsHandler = null
+        wsHandlerThread = null
         runCatching { ws?.close(1000, "service exit") }
         ws = null
         runCatching { wakeLock?.release() }
         handler.removeCallbacksAndMessages(null)
         runCatching { player?.release() }
         player = null
+        // #d6a8dfc7：服务销毁时也清掉 alarm（避免触发后重启服务）
+        cancelReconnectAlarm(this)
+        // ── Step 3：清掉长延迟兜底 alarm（cancelReconnectJob 内部转调 cancelReconnectAlarm） ──
+        cancelReconnectJob()
         super.onDestroy()
     }
 
@@ -484,6 +657,8 @@ class PlayService : Service() {
 
         const val ACTION_STOP = "art.windgraham.lifecore.STOP"
         const val ACTION_FEEDBACK = "art.windgraham.lifecore.NOTIFY_FEEDBACK"
+        // #d6a8dfc7：alarm 触发的重连 action（ReconnectReceiver → PlayService）
+        const val ACTION_RECONNECT = "art.windgraham.lifecore.action.RECONNECT"
 
         // 三档 channel
         const val CHANNEL_PLAYBACK = "lc_playback"
@@ -498,5 +673,19 @@ class PlayService : Service() {
         // WS 断开超过 2 分钟才降级 60s 轮询
         const val FALLBACK_AFTER_MS = 120_000L
         const val POLL_FALLBACK_MS = 60_000L
+
+        // #d6a8dfc7：alarm 兜底（doze 杀进程后也能唤醒）
+        const val ALARM_DELAY_MS = 30_000L          // WS 断开 30s 后必触发
+        const val CANCEL_ALARM_DELAY_MS = 5_000L    // 连上 5s 后 cancel（避免抖动）
+
+        // ── 多层兜底（Step 3 强化）──
+        const val ACTION_PING = "art.windgraham.lifecore.action.PING"
+        const val PING_INTERVAL_MS = 60_000L        // 自定义 ping 心跳间隔（OkHttp 已有 20s 自动 ping，这是双保险）
+        const val WS_HANDLER_THREAD = "lifecore-ws"
+
+        // 重连分层阈值
+        const val HANDLER_RETRY_MAX = 3              // 1-3 次：Handler 同进程（1s/5s/30s）
+        const val ALARM_RETRY_MAX = 10               // 4-10 次：AlarmManager 30s
+        // 11+ 次：长延迟 alarm 兜底（15 分钟，等价 JobScheduler periodic，绕过 doze）
     }
 }

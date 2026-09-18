@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:padding="16dp">
+    <TextView android:id="@+id/bsTitle" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:textStyle="bold"
+        android:textSize="16sp" android:textColor="?attr/colorOnSurface"
+        android:layout_marginBottom="8dp" />
+    <TextView android:id="@+id/bsSubtitle" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:textSize="12sp"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:layout_marginBottom="10dp" />
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/bsRv"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:maxHeight="400dp" />
+    <TextView android:id="@+id/bsEmpty" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:text="该通道暂无事件"
+        android:textSize="13sp" android:textColor="?attr/colorOnSurfaceVariant"
+        android:padding="12dp" android:gravity="center" android:visibility="gone" />
+</LinearLayout>

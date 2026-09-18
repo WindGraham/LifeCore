@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:padding="10dp">
+        <com.google.android.material.chip.Chip android:id="@+id/chipPriAll"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="全部" style="@style/Widget.Material3.Chip.Filter" android:checked="true" />
+        <com.google.android.material.chip.Chip android:id="@+id/chipPriHigh"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="6dp" android:text="高优"
+            style="@style/Widget.Material3.Chip.Filter" />
+        <com.google.android.material.chip.Chip android:id="@+id/chipPriNormal"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="6dp" android:text="常规"
+            style="@style/Widget.Material3.Chip.Filter" />
+    </LinearLayout>
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipe" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1">
+        <androidx.recyclerview.widget.RecyclerView android:id="@+id/listRv"
+            android:layout_width="match_parent" android:layout_height="match_parent"
+            android:padding="8dp" android:clipToPadding="false" />
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+</LinearLayout>
