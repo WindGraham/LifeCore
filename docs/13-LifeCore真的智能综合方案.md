@@ -181,3 +181,15 @@
 4. **不打扰红线**：每 thread 7 天最多 1 次；问题必须具体可操作（"你还好吗" → failure）。
 
 依据：`prompts/proactive/B4_routine_check.md §7` 与 docs/13 §1 信条"沉默观察"一致，且避免 thread 标题前缀变化影响 L2 同 thread 续命逻辑（只改 title 不改 thread_id）。
+
+### 9.7 /console/chat 卡死修复 + nginx 反代补丁
+
+> 2026-09-18 修复。`deploy/nginx-console-chat-fix.md` 完整记录。
+
+**症状**：`windgraham.art/console/chat` 进得去但永远空白，xterm.js 连不到 PTY。
+
+**根因**：nginx `proxy_pass http://127.0.0.1:9119/` 末尾 `/` 让 nginx 用 upstream 地址当 Host header——`proxy_set_header Host` 不生效——9119 的 `host_header_middleware` 收到 `Host: 127.0.0.1:9119` 但**这是从 upstream 推断的**，不是 nginx 显式注入的。
+
+**修复**：去掉 trailing slash → `proxy_pass http://127.0.0.1:9119;` ——nginx 才真的尊重 `proxy_set_header Host 127.0.0.1:9119`——9119 host check 通过 + `?token=` 校验通过 → WS upgrade 成功。
+
+**教训**：nginx `proxy_pass URL/` 末尾 `/` 的 prefix rewrite 语义会吞掉 `proxy_set_header Host`——要保证 Host header 真传到 upstream 必须用 `proxy_pass URL;`（无尾 slash）或 `proxy_pass URL$request_uri;`。
