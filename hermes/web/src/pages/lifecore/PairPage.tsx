@@ -2,7 +2,7 @@
  * LifeCore PairPage — independent landing surface.
  *
  * Replaces the unpaired branch of legacy console.html (`pairView()`).
- * Layout: centered card, base URL input, 8-digit code input, "Pair" button.
+ * Layout: centered card, base URL input, 8-char (letters+digits) code input, "Pair" button.
  * On success → navigate to /lc-today. Standalone route — NOT a sub-page
  * of SettingsPage (per design: pairing is the product entry point).
  */
@@ -51,9 +51,9 @@ export default function PairPage() {
       showToast(t.lifecore?.pair?.needBase ?? "请填写服务器地址", "error");
       return;
     }
-    if (!/^\d{8}$/.test(trimmedCode)) {
+    if (!/^[A-HJ-NP-Z2-9]{8}$/.test(trimmedCode)) {
       showToast(
-        t.lifecore?.pair?.needCode ?? "配对码应为 8 位数字",
+        t.lifecore?.pair?.needCode ?? "配对码应为 8 位字母+数字",
         "error",
       );
       return;
@@ -94,7 +94,7 @@ export default function PairPage() {
           </div>
           <p className="text-sm text-muted-foreground">
             {copy?.subtitle ??
-              "输入 8 位配对码，把这个浏览器注册为你的设备。"}
+              "输入 8 位字母+数字配对码，把这个浏览器注册为你的设备。"}
           </p>
         </CardHeader>
         <CardContent className="grid gap-4">
@@ -124,11 +124,17 @@ export default function PairPage() {
               inputMode="numeric"
               maxLength={8}
               placeholder={
-                copy?.codePlaceholder ?? "8 位数字（10 分钟内有效）"
+                copy?.codePlaceholder ?? "8 位字母+数字（10 分钟内有效）"
               }
               value={code}
               onChange={(e) =>
-                setCode(e.target.value.replace(/\D/g, "").slice(0, 8))
+                // 接受 24 字母 (无 I/O/L) + 8 数字 (无 0/1)，自动转大写
+                setCode(
+                  e.target.value
+                    .toUpperCase()
+                    .replace(/[^A-HJ-NP-Z2-9]/g, "")
+                    .slice(0, 8),
+                )
               }
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handlePair();
