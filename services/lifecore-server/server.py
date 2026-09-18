@@ -853,6 +853,28 @@ async def snooze_promote_loop() -> None:
 @app.on_event("startup")
 async def _start_snooze_loop() -> None:
     asyncio.create_task(snooze_promote_loop())
+    asyncio.create_task(_api_server_health_check())
+
+# 防御性：每隔 5 分钟探测 hermes-gateway 的 API_SERVER_KEY 是否仍然有效。
+# 历史教训：/etc/lifecore/env 与 /root/.hermes/.env 的 key 不一致会 100% 卡死前端 chat 流。
+async def _api_server_health_check() -> None:
+    if not API_SERVER_KEY:
+        return
+    while True:
+        await asyncio.sleep(300)
+        try:
+            async with httpx.AsyncClient(timeout=10) as cli:
+                # 轻量探测：GET /api/sessions?limit=1（命中 auth 校验，但不拉数据）。
+                r = await cli.get(
+                    f"{API_SERVER_BASE}/api/sessions?limit=1",
+                    headers={"Authorization": f"Bearer {API_SERVER_KEY}"})
+                if r.status_code != 200:
+                    logger.error(
+                        "API_SERVER_KEY may be invalid: %s on %s "
+                        "(key in /etc/lifecore/env vs /root/.hermes/.env may differ)",
+                        r.status_code, API_SERVER_BASE)
+        except Exception as e:
+            logger.warning("api_server health check failed: %s", e)
 
 @app.get("/v2/events")
 def events_since(since_seq: int = 0, channel_id: str = "", limit: int = 100,
@@ -1362,9 +1384,11 @@ async def v2_voices(dev: sqlite3.Row = Depends(auth_device)):
 @app.post("/v2/sessions/{sid}/chat/stream")
 async def v2_session_chat_stream(sid: str, req: Request, dev: sqlite3.Row = Depends(auth_device)):
     if not API_SERVER_KEY:
-        raise HTTPException(501, "api_server not configured")
+        raise HTTPException(501, "api_server not configured (LC_API_SERVER_KEY)")
     raw = inject_state(await req.body())
     async def upstream():
+        # 防御性上游代理：检查 status code → 401/403/500 等非 200 转成 SSE event: error，
+        # 避免前端误把 JSON 错误当成 SSE 字节流解析而"卡死"。
         try:
             async with httpx.AsyncClient(timeout=None) as cli:
                 async with cli.stream("POST",
@@ -1372,10 +1396,17 @@ async def v2_session_chat_stream(sid: str, req: Request, dev: sqlite3.Row = Depe
                     content=raw,
                     headers={"Authorization": f"Bearer {API_SERVER_KEY}",
                              "Content-Type": "application/json"}) as r:
+                    if r.status_code != 200:
+                        err_body = await r.aread()
+                        err_msg = err_body.decode("utf-8", errors="replace")[:200]
+                        logger.warning("upstream %s on chat/stream: %s", r.status_code, err_msg)
+                        yield f"event: error\ndata: {{\"message\": \"upstream {r.status_code}: {err_msg}\"}}\n\n".encode()
+                        return
                     async for chunk in r.aiter_raw():
                         yield chunk
         except Exception as e:
-            yield f"event: error\ndata: {{\"message\": \"proxy: {e}\"}}\n\n".encode()
+            logger.exception("proxy error on chat/stream")
+            yield f"event: error\ndata: {{\"message\": \"proxy: {str(e)[:200]}\"}}\n\n".encode()
     return StreamingResponse(upstream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

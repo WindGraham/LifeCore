@@ -133,9 +133,18 @@ export default function ChatPage() {
     let full = "";
     try {
       const res = await lifecoreApi.streamChat(sid, text);
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
         const errText = await res.text().catch(() => res.statusText);
         throw new Error(errText || `HTTP ${res.status}`);
+      }
+      if (!res.body) {
+        throw new Error("empty response body");
+      }
+      // 防御：检查 content-type 是不是 SSE，否则把 JSON 错误/HTML 当 error 抛出，避免卡死
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("text/event-stream")) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `unexpected content-type: ${ct}`);
       }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
