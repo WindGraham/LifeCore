@@ -817,7 +817,8 @@ def thread_conversation(tid: int, dev: sqlite3.Row = Depends(auth_device)) -> di
                             LEFT JOIN channels c ON c.id = i.channel_id
                             WHERE i.thread_id=? ORDER BY i.id""", (tid,)).fetchall()
     # 收所有 event_seq
-    ev_seqs = [r["event_seq"] for r in rows if r["event_seq"]]
+    ev_seqs = [r["event_seq"] for r in rows
+              if r["event_seq"] is not None and r["event_seq"] > 0]
     ev_map = {}
     if ev_seqs:
         placeholders = ",".join("?" * len(ev_seqs))
