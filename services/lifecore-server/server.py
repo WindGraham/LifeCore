@@ -849,8 +849,12 @@ def thread_conversation(tid: int, dev: sqlite3.Row = Depends(auth_device)) -> di
         # kind 分类（v0.3 多源）
         res = r["resolution"]
         kind_latest = r["kind"]
-        # 新字段：item.source（v0.3 入队时已拆）；老数据无 source
         item_source = r["source"] if "source" in r.keys() and r["source"] else ""
+        # 启发式：summary 含 AI 标签 → ai_reply
+        ai_tags = ("重要性", "建议动作", "重要性依据", "关系度", "建议：", "建议:")
+        summary = r["summary"] or ""
+        looks_ai = any(t in summary for t in ai_tags)
+
         if kind_latest == "system":
             kind = "system"
         elif res and res != "":
@@ -863,9 +867,10 @@ def thread_conversation(tid: int, dev: sqlite3.Row = Depends(auth_device)) -> di
             kind = "channel_raw"
         elif channel_id in ("api_server", "vps"):
             kind = "ai_reply"
+        elif looks_ai:
+            # 老数据：summary 含 AI 推理标签 → ai_reply（让客户端看到 AI 段）
+            kind = "ai_reply"
         else:
-            # 老数据：所有 item 默认按 channel_event 处理（让客户端知道这是通道原始事件，
-            # 客户端再按内容启发式决定要不要再拆 AI 段显示）
             kind = "channel_raw"
 
         # v0.3 多源拆分：除非是用户决议/续报/系统，每条 item 拆成
