@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v0.3 通知卡片：左侧 priority 色圆点 + 标题（第 N 次跟进 chip）+ 摘要 + 时间 -->
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginHorizontal="16dp"
+    android:layout_marginVertical="4dp"
+    app:cardCornerRadius="16dp"
+    app:cardElevation="0dp"
+    app:cardBackgroundColor="?attr/colorSurfaceContainer"
+    app:strokeWidth="1dp"
+    app:strokeColor="?attr/colorOutlineVariant"
+    android:foreground="?attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="14dp">
+
+        <!-- 左侧 priority 色圆点 -->
+        <View
+            android:id="@+id/notDot"
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/dot_unread" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <!-- 标题 + badge + 时间 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/notTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textAppearance="@style/TextAppearance.LC.Title"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    tools:text="服务器告警：GCP 节点掉线" />
+
+                <TextView
+                    android:id="@+id/notBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_pill_primary"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="2dp"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp"
+                    android:visibility="gone"
+                    tools:text="第3次跟进" />
+
+                <TextView
+                    android:id="@+id/notTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textSize="11sp"
+                    tools:text="2 小时前" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/notSummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="13sp"
+                tools:text="us-west-1 节点连不上，自动重启失败，需要人工介入..." />
+        </LinearLayout>
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

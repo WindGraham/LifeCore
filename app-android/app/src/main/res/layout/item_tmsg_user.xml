@@ -1,13 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- v0.3 用户决议气泡：右侧 + primary 强调色 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="wrap_content"
-    android:orientation="horizontal" android:gravity="center_vertical|end"
-    android:paddingStart="48dp" android:paddingEnd="12dp" android:paddingTop="4dp" android:paddingBottom="4dp">
+    android:orientation="horizontal"
+    android:paddingStart="48dp" android:paddingEnd="12dp" android:paddingTop="4dp" android:paddingBottom="4dp"
+    android:gravity="end">
     <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:minWidth="120dp" android:orientation="vertical" android:background="@drawable/bubble_user">
-        <TextView android:id="@+id/msgContent" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:textColor="?attr/colorOnSurface" android:textSize="15sp" />
-        <TextView android:id="@+id/msgTime" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:maxWidth="280dp" android:minWidth="120dp" android:orientation="vertical"
+        android:background="@drawable/bubble_user">
+        <TextView android:id="@+id/msgContent" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:maxWidth="280dp" android:textColor="?attr/colorOnPrimaryContainer" android:textSize="15sp"
+            android:lineSpacingMultiplier="1.25" />
+        <TextView android:id="@+id/msgTime" android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:textSize="11sp" android:textColor="?attr/colorOnSurfaceVariant"
             android:gravity="end" android:layout_marginTop="4dp" />
     </LinearLayout>

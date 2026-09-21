@@ -1,23 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 主色（沿用 docs/16 LENS_0 Hermes Teal 风格，但更沉稳） -->
-    <color name="lc_primary">#006A6A</color>
+    <!-- 主色（v0.2 升级：深色更暗，浅色更鲜亮；新增 tertiary / 高优 / 渐变色） -->
+    <color name="lc_primary">#008B8B</color>
     <color name="lc_on_primary">#FFFFFF</color>
-    <color name="lc_primary_container">#9CF1F0</color>
+    <color name="lc_primary_container">#A6F1F0</color>
     <color name="lc_on_primary_container">#002020</color>
-    <color name="lc_secondary">#4A6363</color>
+
+    <color name="lc_secondary">#5A7A7A</color>
     <color name="lc_on_secondary">#FFFFFF</color>
-    <color name="lc_surface">#0F1414</color>
-    <color name="lc_on_surface">#E0E3E2</color>
+    <color name="lc_secondary_container">#DCE5E4</color>
+    <color name="lc_on_secondary_container">#172525</color>
+
+    <!-- Tertiary（暖色强调：卡片高亮、激活态） -->
+    <color name="lc_tertiary">#FFB59E</color>
+    <color name="lc_on_tertiary">#5B1A05</color>
+    <color name="lc_tertiary_container">#FFE0D2</color>
+    <color name="lc_on_tertiary_container">#3D0F00</color>
+
+    <!-- 深色 surface 栈（深一档一档） -->
+    <color name="lc_surface">#0B1010</color>
+    <color name="lc_on_surface">#E8ECEB</color>
     <color name="lc_surface_variant">#1A2020</color>
-    <color name="lc_on_surface_variant">#BFC8C7</color>
-    <color name="lc_outline">#8A9292</color>
-    <color name="lc_outline_variant">#3F4847</color>
+    <color name="lc_on_surface_variant">#C4CCC9</color>
+    <color name="lc_surface_container_low">#101616</color>
+    <color name="lc_surface_container">#161D1D</color>
+    <color name="lc_surface_container_high">#1C2424</color>
+
+    <!-- 高优 / 警告 / 成功（饱和度更高，便于辨识） -->
     <color name="lc_error">#FFB4AB</color>
     <color name="lc_on_error">#690005</color>
-    <color name="lc_warning">#FFBD38</color>
-    <color name="lc_success">#4ADE80</color>
+    <color name="lc_error_container">#93000A</color>
+    <color name="lc_on_error_container">#FFDAD6</color>
+
+    <color name="lc_warning">#FFCB47</color>
+    <color name="lc_success">#5BE38B</color>
+
+    <!-- 高优强调色（替代 errorContainer 用作"紧急"标签） -->
+    <color name="lc_priority_urgent">#FF6B6B</color>
+    <color name="lc_priority_high">#FFB347</color>
+    <color name="lc_priority_normal">#7DD3C0</color>
+
+    <!-- 渐变起点 / 终点（用在主屏 Hero 卡片） -->
+    <color name="lc_gradient_start">#006A6A</color>
+    <color name="lc_gradient_end">#008B8B</color>
+
+    <!-- 描边 / 弱化文本 -->
+    <color name="lc_outline">#8A9292</color>
+    <color name="lc_outline_variant">#3F4847</color>
     <color name="lc_tool_fade">#6B7A7A</color>
+
+    <!-- 启动图配色 -->
     <color name="ic_launcher_bg">#0B1A2B</color>
-    <color name="ic_launcher_fg">#006A6A</color>
+    <color name="ic_launcher_fg">#008B8B</color>
 </resources>

@@ -36,13 +36,17 @@ class OwnerOnlyFragment : Fragment() {
     private lateinit var rv: RecyclerView
     private lateinit var swipe: SwipeRefreshLayout
     private lateinit var adapter: RecyclerView.Adapter<RecyclerView.ViewHolder>
-    private val ec = Api.themeColor(requireContext().applicationContext,
-        com.google.android.material.R.attr.colorErrorContainer)
-    private val sc = Api.themeColor(requireContext().applicationContext,
-        com.google.android.material.R.attr.colorSurfaceContainer)
+    // 延迟到 onViewCreated：构造期访问 requireContext() 会抛 IllegalStateException
+    // （Fragment 此时尚未 attach 到 Activity）
+    private var ec: Int = 0
+    private var sc: Int = 0
 
     override fun onCreateView(i: LayoutInflater, c: ViewGroup?, s: Bundle?): View {
         val v = i.inflate(R.layout.fragment_owner_only, c, false)
+        // 此时 Fragment 已 attach 到 Activity，可安全 requireContext()
+        val appCtx = requireContext().applicationContext
+        ec = Api.themeColor(appCtx, com.google.android.material.R.attr.colorErrorContainer)
+        sc = Api.themeColor(appCtx, com.google.android.material.R.attr.colorSurfaceContainer)
         val chipAll = v.findViewById<Chip>(R.id.chipPriAll)
         val chipHigh = v.findViewById<Chip>(R.id.chipPriHigh)
         val chipNormal = v.findViewById<Chip>(R.id.chipPriNormal)

@@ -6,11 +6,8 @@
     <!-- 抽屉 / 顶栏 -->
     <string name="nav_open_drawer">打开抽屉</string>
     <string name="nav_close_drawer">关闭抽屉</string>
-    <string name="nav_today">今日</string>
-    <string name="nav_notify">通知</string>
+    <string name="nav_inbox">📥 收件箱</string>
     <string name="nav_owner">📬 我的专属</string>
-    <string name="nav_events">📊 事件流</string>
-    <string name="nav_sessions">对话</string>
     <string name="nav_channels">通道</string>
     <string name="nav_jobs">任务</string>
     <string name="nav_settings">设置</string>
@@ -19,6 +16,7 @@
     <string name="menu_notify">通知</string>
 
     <!-- 标题 -->
+    <string name="title_inbox">收件箱</string>
     <string name="title_today">今日</string>
     <string name="title_notify">通知</string>
     <string name="title_owner">我的专属</string>
@@ -61,4 +59,20 @@
     <string name="health_stale">● 过期</string>
     <string name="health_silent">● 沉默</string>
     <string name="health_revoked">● 已撤销</string>
+
+    <!-- v0.2 崩溃监控 -->
+    <string name="crash_dialog_title">LifeCore 上次异常退出</string>
+    <string name="crash_dialog_msg">检测到应用上次异常退出。\n\n时间：%1$s\n文件：%2$s\n\n是否查看堆栈？</string>
+    <string name="crash_dialog_view">查看堆栈</string>
+    <string name="crash_dialog_dismiss">忽略</string>
+    <string name="crash_dialog_clear">清除记录</string>
+
+    <!-- v0.2 高优标签 -->
+    <string name="pri_urgent">紧急</string>
+    <string name="pri_high">高优</string>
+    <string name="pri_normal">常规</string>
+
+    <!-- v0.2 Hero 区 -->
+    <string name="hero_title">LifeCore 今日</string>
+    <string name="hero_subtitle">智能助理 · VPS 私域 · 离线优先</string>
 </resources>

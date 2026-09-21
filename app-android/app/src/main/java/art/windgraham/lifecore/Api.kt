@@ -70,6 +70,9 @@ object Api {
     fun notifyThreads(): JSONObject = getJson("/v2/notify/threads")
     fun notifyThreadItems(tid: Int): JSONObject = getJson("/v2/notify/threads/$tid/items")
 
+    /** 多源整合时间线（channel 原始 + AI 回复 + 用户决议 + 续报）。 */
+    fun threadConversation(tid: Int): JSONObject = getJson("/v2/threads/$tid/conversation")
+
     /**
      * notify_items 全 state 视图（P0-S1 / P1-S4）。
      *

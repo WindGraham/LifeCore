@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Night：保留默认深色（用户场景多为晚上或室内，省电 OLED 友好） -->
+    <color name="lc_primary">#5DD4D3</color>
+    <color name="lc_on_primary">#003737</color>
+    <color name="lc_primary_container">#004F4F</color>
+    <color name="lc_on_primary_container">#A6F1F0</color>
+
+    <color name="lc_secondary">#B1CCC9</color>
+    <color name="lc_on_secondary">#1C3533</color>
+
+    <color name="lc_tertiary">#FFB59E</color>
+    <color name="lc_on_tertiary">#5B1A05</color>
+
+    <color name="lc_surface">#0B1010</color>
+    <color name="lc_on_surface">#E8ECEB</color>
+    <color name="lc_surface_variant">#1A2020</color>
+    <color name="lc_on_surface_variant">#C4CCC9</color>
+    <color name="lc_surface_container_low">#101616</color>
+    <color name="lc_surface_container">#161D1D</color>
+    <color name="lc_surface_container_high">#1C2424</color>
+
+    <color name="lc_error">#FFB4AB</color>
+    <color name="lc_on_error">#690005</color>
+    <color name="lc_error_container">#93000A</color>
+    <color name="lc_on_error_container">#FFDAD6</color>
+
+    <color name="lc_outline">#8A9292</color>
+    <color name="lc_outline_variant">#3F4847</color>
+</resources>

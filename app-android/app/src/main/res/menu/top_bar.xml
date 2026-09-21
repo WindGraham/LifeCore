@@ -1,10 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- v0.3 顶栏菜单：通知项已合并到 InboxFragment，删除；只保留设置 -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
-    <item android:id="@+id/menu_notify"
-        android:title="@string/menu_notify"
-        android:icon="@android:drawable/ic_popup_reminder"
-        app:showAsAction="ifRoom" />
     <item android:id="@+id/menu_settings"
         android:title="@string/nav_settings"
         android:icon="@android:drawable/ic_menu_preferences"

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v0.3 通道原始消息气泡：中性 + 细描边 + 左侧 3dp 通道色条（区别于 AI 气泡） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="?attr/colorSurfaceContainer" />
+    <stroke android:width="1dp" android:color="?attr/colorOutline" />
+    <corners android:radius="14dp" android:topLeftRadius="4dp" />
+    <padding android:left="14dp" android:right="14dp" android:top="10dp" android:bottom="10dp" />
+</shape>

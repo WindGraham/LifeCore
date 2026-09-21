@@ -1,21 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- v0.3 简化抽屉：通知 / 会话 / 事件流 合并进 InboxFragment（首页） -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <group android:checkableBehavior="single">
-        <item android:id="@+id/nav_today"
-            android:title="@string/nav_today"
-            android:icon="@android:drawable/ic_menu_today" />
-        <item android:id="@+id/nav_notify"
-            android:title="@string/nav_notify"
-            android:icon="@android:drawable/ic_popup_reminder" />
+        <item android:id="@+id/nav_inbox"
+            android:title="@string/nav_inbox"
+            android:icon="@android:drawable/ic_menu_view" />
         <item android:id="@+id/nav_owner"
             android:title="@string/nav_owner"
             android:icon="@android:drawable/ic_dialog_email" />
-        <item android:id="@+id/nav_events"
-            android:title="@string/nav_events"
-            android:icon="@android:drawable/ic_menu_recent_history" />
-        <item android:id="@+id/nav_sessions"
-            android:title="@string/nav_sessions"
-            android:icon="@android:drawable/ic_menu_send" />
         <item android:id="@+id/nav_channels"
             android:title="@string/nav_channels"
             android:icon="@android:drawable/ic_menu_share" />

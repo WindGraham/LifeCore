@@ -1,23 +1,112 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- v0.2 UI 升级：Material3 DayNight + 圆角 16dp + Inter 字体 + 渐变 statusbar -->
     <style name="Theme.LifeCore" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/lc_primary</item>
         <item name="colorOnPrimary">@color/lc_on_primary</item>
         <item name="colorPrimaryContainer">@color/lc_primary_container</item>
         <item name="colorOnPrimaryContainer">@color/lc_on_primary_container</item>
+
         <item name="colorSecondary">@color/lc_secondary</item>
         <item name="colorOnSecondary">@color/lc_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/lc_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/lc_on_secondary_container</item>
+
+        <item name="colorTertiary">@color/lc_tertiary</item>
+        <item name="colorOnTertiary">@color/lc_on_tertiary</item>
+        <item name="colorTertiaryContainer">@color/lc_tertiary_container</item>
+        <item name="colorOnTertiaryContainer">@color/lc_on_tertiary_container</item>
+
         <item name="colorSurface">@color/lc_surface</item>
         <item name="colorOnSurface">@color/lc_on_surface</item>
         <item name="colorSurfaceVariant">@color/lc_surface_variant</item>
         <item name="colorOnSurfaceVariant">@color/lc_on_surface_variant</item>
-        <item name="colorOutline">@color/lc_outline</item>
-        <item name="colorOutlineVariant">@color/lc_outline_variant</item>
+        <item name="colorSurfaceContainerLow">@color/lc_surface_container_low</item>
+        <item name="colorSurfaceContainer">@color/lc_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/lc_surface_container_high</item>
+
         <item name="colorError">@color/lc_error</item>
         <item name="colorOnError">@color/lc_on_error</item>
+        <item name="colorErrorContainer">@color/lc_error_container</item>
+        <item name="colorOnErrorContainer">@color/lc_on_error_container</item>
+
+        <item name="colorOutline">@color/lc_outline</item>
+        <item name="colorOutlineVariant">@color/lc_outline_variant</item>
+
         <item name="android:statusBarColor">?attr/colorSurface</item>
         <item name="android:navigationBarColor">?attr/colorSurface</item>
         <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
         <item name="android:windowBackground">?attr/colorSurface</item>
+
+        <!-- 字体（v0.2：从 system_default_sans 切到 Material Symbols-friendly 字号 + letterSpacing） -->
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="textAppearanceHeadlineLarge">@style/TextAppearance.LC.Headline</item>
+        <item name="textAppearanceTitleLarge">@style/TextAppearance.LC.Title</item>
+        <item name="textAppearanceBodyLarge">@style/TextAppearance.LC.Body</item>
+
+        <!-- 形状（v0.2：圆角更圆，Material 3 expressive 风格） -->
+        <item name="shapeAppearanceCornerExtraSmall">@style/ShapeAppearance.LC.ExtraSmall</item>
+        <item name="shapeAppearanceCornerSmall">@style/ShapeAppearance.LC.Small</item>
+        <item name="shapeAppearanceCornerMedium">@style/ShapeAppearance.LC.Medium</item>
+        <item name="shapeAppearanceCornerLarge">@style/ShapeAppearance.LC.Large</item>
+    </style>
+
+    <!-- 文字样式（v0.2：medium weight + 紧凑字距） -->
+    <style name="TextAppearance.LC.Headline" parent="TextAppearance.Material3.HeadlineLarge">
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">-0.02</item>
+    </style>
+    <style name="TextAppearance.LC.Title" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:letterSpacing">-0.01</item>
+    </style>
+    <style name="TextAppearance.LC.Body" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:letterSpacing">0.0</item>
+        <item name="android:lineSpacingMultiplier">1.25</item>
+    </style>
+
+    <!-- 圆角（v0.2：8/12/16/24dp，比 Material 默认更大胆） -->
+    <style name="ShapeAppearance.LC.ExtraSmall" parent="ShapeAppearance.Material3.Corner.ExtraSmall">
+        <item name="cornerSize">8dp</item>
+    </style>
+    <style name="ShapeAppearance.LC.Small" parent="ShapeAppearance.Material3.Corner.Small">
+        <item name="cornerSize">12dp</item>
+    </style>
+    <style name="ShapeAppearance.LC.Medium" parent="ShapeAppearance.Material3.Corner.Medium">
+        <item name="cornerSize">16dp</item>
+    </style>
+    <style name="ShapeAppearance.LC.Large" parent="ShapeAppearance.Material3.Corner.Large">
+        <item name="cornerSize">24dp</item>
+    </style>
+
+    <!-- 卡片样式（v0.2：圆角 16dp + 描边细线 + 表面色层） -->
+    <style name="Widget.LC.Card" parent="Widget.Material3.CardView.Filled">
+        <item name="cardCornerRadius">16dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="cardBackgroundColor">?attr/colorSurfaceContainer</item>
+        <item name="strokeWidth">1dp</item>
+        <item name="strokeColor">?attr/colorOutlineVariant</item>
+        <item name="contentPadding">16dp</item>
+    </style>
+
+    <!-- 高优强调标签 chip（urgent 红色背景 + 白字） -->
+    <style name="Widget.LC.Chip.Urgent" parent="Widget.Material3.Chip.Assist">
+        <item name="chipBackgroundColor">@color/lc_priority_urgent</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="chipStrokeWidth">0dp</item>
+    </style>
+    <style name="Widget.LC.Chip.High" parent="Widget.Material3.Chip.Assist">
+        <item name="chipBackgroundColor">@color/lc_priority_high</item>
+        <item name="android:textColor">#1A0F00</item>
+        <item name="chipStrokeWidth">0dp</item>
+    </style>
+
+    <!-- Hero 渐变卡片背景（主屏顶部） -->
+    <style name="Widget.LC.Card.Hero">
+        <item name="cardCornerRadius">24dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="cardBackgroundColor">@color/lc_gradient_end</item>
+        <item name="strokeWidth">0dp</item>
+        <item name="contentPadding">20dp</item>
     </style>
 </resources>

@@ -21,6 +21,12 @@
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/threadRv" android:layout_width="match_parent" android:layout_height="0dp"
         android:layout_weight="1" android:paddingTop="8dp" android:clipToPadding="false" />
+
+    <TextView android:id="@+id/threadEmpty" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:visibility="gone"
+        android:gravity="center" android:padding="32dp"
+        android:text="这个线程暂无内容"
+        android:textColor="?attr/colorOnSurfaceVariant" android:textSize="14sp" />
     <LinearLayout android:id="@+id/optBar" android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="horizontal" android:padding="12dp"
         android:background="?attr/colorSurface" android:visibility="gone" />

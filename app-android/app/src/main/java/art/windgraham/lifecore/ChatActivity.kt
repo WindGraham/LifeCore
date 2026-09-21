@@ -104,8 +104,13 @@ class ChatActivity : AppCompatActivity() {
         findViewById<ImageButton>(R.id.btnMic)?.setOnClickListener { toggleRecord() }
 
         if (sid.isBlank()) {
-            // 兜底：列出 session 选择（设计原则 6：未配对/无 sid 仍可用）
-            toolbar?.let { listSessionsAndPick(it) }
+            // v0.3: 若 FAB 传了 auto_create=true → 直接建新会话，跳过选择 dialog
+            if (intent.getBooleanExtra("auto_create", false)) {
+                toolbar?.let { createSession(it) }
+            } else {
+                // 兜底：列出 session 选择（设计原则 6：未配对/无 sid 仍可用）
+                toolbar?.let { listSessionsAndPick(it) }
+            }
         } else {
             toolbar?.title = intent.getStringExtra("title") ?: sid
             loadHistory()
@@ -274,11 +279,14 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun handleStreamEvent(event: String, raw: String) {
+        // BUGFIX: hermes /api/sessions/{sid}/chat/stream 事件名是 assistant.delta / tool.progress /
+        // message.started / assistant.completed / run.completed / error / done，不是 chunk
+        val o = runCatching { JSONObject(raw) }.getOrNull()
         when (event) {
-            "chunk" -> {
-                val o = runCatching { JSONObject(raw) }.getOrNull()
-                val piece = o?.optString("text", raw) ?: raw
-                main.post {
+            "assistant.delta" -> {
+                // 流式 delta：{"message_id":"...","delta":"..."}
+                val piece = o?.optString("delta", "") ?: ""
+                if (piece.isNotEmpty()) main.post {
                     if (streamAiIndex >= 0) {
                         val cur = msgs[streamAiIndex]
                         msgs[streamAiIndex] = Msg(K_AI_STREAM, cur.text + piece)
@@ -287,8 +295,28 @@ class ChatActivity : AppCompatActivity() {
                     }
                 }
             }
+            "assistant.completed" -> {
+                // 完整回复：{"session_id":"...","message_id":"...","content":"..."}
+                val content = o?.optString("content", "") ?: ""
+                if (content.isNotEmpty()) main.post {
+                    if (streamAiIndex >= 0) {
+                        msgs[streamAiIndex] = Msg(K_AI_STREAM, content)
+                        adapter.notifyItemChanged(streamAiIndex)
+                        scroll()
+                    }
+                }
+            }
+            "tool.progress", "tool.started", "tool.completed", "tool.failed" -> {
+                // 工具进度：折叠显示
+                val name = o?.optString("tool_name", "tool") ?: "tool"
+                main.post {
+                    if (streamAiIndex >= 0) {
+                        msgs[streamAiIndex] = Msg(K_AI_STREAM, "⚙ 工具调用 · $name…")
+                        adapter.notifyItemChanged(streamAiIndex)
+                    }
+                }
+            }
             "error" -> {
-                val o = runCatching { JSONObject(raw) }.getOrNull()
                 val msg = o?.optString("message", raw) ?: raw
                 main.post {
                     if (streamAiIndex >= 0) {
@@ -297,7 +325,7 @@ class ChatActivity : AppCompatActivity() {
                     }
                 }
             }
-            // done/end/delta 等忽略
+            // run.started / message.started / run.completed / done 忽略
             else -> {}
         }
     }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v0.3 通道事件气泡：中性灰 + 细描边 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="?attr/colorSurfaceContainer" />
+    <stroke android:width="1dp" android:color="?attr/colorOutlineVariant" />
+    <corners android:radius="18dp" android:topLeftRadius="4dp" />
+    <padding android:left="14dp" android:right="14dp" android:top="10dp" android:bottom="10dp" />
+</shape>

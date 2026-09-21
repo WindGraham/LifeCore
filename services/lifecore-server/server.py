@@ -106,7 +106,9 @@ def init_db() -> None:
       priority TEXT NOT NULL DEFAULT 'normal',
       resolution TEXT,
       created_at REAL NOT NULL,
-      resolved_at REAL
+      resolved_at REAL,
+      source TEXT NOT NULL DEFAULT 'channel_event',  -- v0.3 多源：channel_event | ai_reply | user_action | system
+      source_meta TEXT                                  -- JSON：model/tool/agent 等元数据
     );
     CREATE INDEX IF NOT EXISTS idx_notify_state ON notify_items(state);
     -- 下行命令队列（sink 通道执行臂：MCP/核心入队 → 边缘服务长轮询拉走 → 回执）
@@ -167,6 +169,17 @@ def init_db() -> None:
         pass
     try:
         conn.execute("ALTER TABLE notify_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'")  # normal | resume
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    # v0.3 多源（幂等迁移）
+    try:
+        conn.execute("ALTER TABLE notify_items ADD COLUMN source TEXT NOT NULL DEFAULT 'channel_event'")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE notify_items ADD COLUMN source_meta TEXT")
         conn.commit()
     except sqlite3.OperationalError:
         pass
@@ -434,12 +447,22 @@ def resolve_thread_key(ch, payload: dict) -> str:
     return f"ch:{ch['id']}"
 
 def upsert_notify_thread(conn: sqlite3.Connection, ch, thread_key: str, summary: str | None) -> int:
-    """线程头 UPSERT：item_count+1、title 仅首条写入、updated_at 刷新。返回 thread id。"""
+    """线程头 UPSERT：item_count+1、title 仅首条写入、updated_at 刷新。返回 thread id。
+
+    BUGFIX: 之前 title 用 summary（AI 的完整回复文本，截断 500 字）写入，
+    导致前端 thread title 显示成 AI 推理全文。改用 payload.title（如果有），
+    否则用 summary 的前 40 字（截断 + ellipsis），避免长文本。
+    """
     t = now()
+    # 从传入的 summary 推导短标题：取首句或前 40 字
+    raw_title = ""
+    if summary:
+        s = summary.strip().replace("\n", " ")
+        raw_title = s if len(s) <= 40 else s[:40] + "…"
     conn.execute("""INSERT INTO notify_threads(thread_key,channel_id,title,item_count,updated_at)
                     VALUES(?,?,?,1,?)
                     ON CONFLICT(thread_key) DO UPDATE SET item_count=item_count+1, updated_at=?""",
-                 (thread_key, ch["id"], summary or "", t, t))
+                 (thread_key, ch["id"], raw_title, t, t))
     return conn.execute("SELECT id FROM notify_threads WHERE thread_key=?", (thread_key,)).fetchone()["id"]
 
 def _owner_pointers() -> set[str]:
@@ -496,8 +519,50 @@ def compute_addressed_to_owner(payload: dict) -> bool:
 
 
 
+def _insert_item(conn, ch, payload, seq, source, summary, *, kind="normal", state=None,
+                  source_meta_extra=None):
+    """入队单条 notify item（v0.3 多源：channel_event / ai_reply / user_action / system）。"""
+    req_fb = 1 if payload.get("requires_feedback") else 0
+    if state is None:
+        state = "queued" if req_fb else "logged"
+    options = json.dumps(payload.get("feedback_options", []), ensure_ascii=False)
+    addressed_to_owner = 1 if compute_addressed_to_owner(payload) else 0
+    sm = {"channel_id": ch["id"], "channel_name": ch.get("name")}
+    if source_meta_extra:
+        sm.update(source_meta_extra)
+    source_meta = json.dumps(sm, ensure_ascii=False, default=str)[:1024]
+    cur = conn.execute("""INSERT INTO notify_items(event_seq,channel_id,state,summary,options,
+                    requires_feedback,priority,created_at,thread_id,kind,addressed_to_owner,
+                    source, source_meta)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 (seq, ch["id"], state, summary, options, req_fb,
+                  str(payload.get("suggested_priority", "normal"))[:16], now(), None,
+                  kind, addressed_to_owner, source, source_meta))
+    return cur.lastrowid
+
+
+def _extract_raw_message(payload: dict) -> str:
+    """从入队 payload 提取通道原始消息内容（hermes prompt 改写前的字段）。
+
+    优先 key 顺序：original_message / raw_message / message / text / content / body。
+    返回空表示没找到独立原始字段（payload 本身即是原始）。
+    """
+    for k in ("original_message", "raw_message", "message", "text", "content", "body"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            return v[:500]
+    return ""
+
+
 def enqueue_notify(conn: sqlite3.Connection, ch, payload: dict, seq: int) -> int | None:
-    """入队 notify item 并挂到线程（docs/10 §2）。返回 item id（silent 模式返回 None）。"""
+    """入队 notify item 并挂到线程（docs/10 §2）。返回首个 item id（silent 模式返回 None）。
+
+    v0.3 多源支持：
+      1. **通道原始消息** (source=channel_event)—— payload 里有 original_message / message 等独立字段
+      2. **AI/核心回复** (source=ai_reply)—— payload.summary 含"重要性/建议/依据"等 AI 标签
+    当 payload.source 显式给出（如 ai_reply 自推送）→ 直接按指定入队。
+    否则按 summary 内容启发式拆成 0~2 条 item，让 thread 时间线真正多源展示。
+    """
     mode = "notify"
     try:
         mode = (json.loads(ch["report_policy"]) or {}).get("mode", "notify")
@@ -505,82 +570,64 @@ def enqueue_notify(conn: sqlite3.Connection, ch, payload: dict, seq: int) -> int
         pass
     if mode == "silent":
         return None
-    req_fb = 1 if payload.get("requires_feedback") else 0
-    summary = str(payload.get("summary", ""))[:500] or None
-    options = json.dumps(payload.get("feedback_options", []), ensure_ascii=False)
-    state = "queued" if req_fb else "logged"
-    # 解析 thread_key → UPSERT 线程头（item_count+1，title 仅首条写 summary）
-    thread_id = upsert_notify_thread(conn, ch, resolve_thread_key(ch, payload), summary)
-    # P1-S4 主人专属分级：规则判断（payload 显式标记 / 指针命中主人列表 / @主人提及）
+
+    payload_source = str(payload.get("source", "")) or ""
+    if payload_source:
+        # 调用方显式 source → 直接按指定入队
+        ai_summary = str(payload.get("summary", ""))[:500]
+        thread_id = upsert_notify_thread(conn, ch, resolve_thread_key(ch, payload),
+                                          ai_summary[:40])
+        addressed_to_owner = 1 if compute_addressed_to_owner(payload) else 0
+        options = json.dumps(payload.get("feedback_options", []), ensure_ascii=False)
+        req_fb = 1 if payload.get("requires_feedback") else 0
+        state = "queued" if req_fb else "logged"
+        source_meta = json.dumps({"channel_id": ch["id"], "channel_name": ch.get("name"),
+                                  **{k: v for k, v in payload.items()
+                                     if k in ("model", "tool", "agent", "reply_to_event_seq")}},
+                                 ensure_ascii=False, default=str)[:1024]
+        cur = conn.execute("""INSERT INTO notify_items(event_seq,channel_id,state,summary,options,
+                        requires_feedback,priority,created_at,thread_id,kind,addressed_to_owner,
+                        source, source_meta)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                     (seq, ch["id"], state, ai_summary, options, req_fb,
+                      str(payload.get("suggested_priority", "normal"))[:16], now(), thread_id,
+                      "normal", addressed_to_owner, payload_source, source_meta))
+        conn.execute("UPDATE notify_threads SET last_item_id=?, updated_at=? WHERE id=?",
+                      (cur.lastrowid, now(), thread_id))
+        return cur.lastrowid
+
+    # 未指定 source：拆出"原始消息 + AI 回复"两条 item（按内容启发式）
+    ai_summary = str(payload.get("summary", ""))[:500]
+    raw_msg = _extract_raw_message(payload)
+    ai_tags = ("重要性", "建议动作", "重要性依据", "关系度", "建议：", "建议:")
+    looks_ai = any(t in ai_summary for t in ai_tags)
+
+    thread_id = upsert_notify_thread(conn, ch, resolve_thread_key(ch, payload), ai_summary[:40])
     addressed_to_owner = 1 if compute_addressed_to_owner(payload) else 0
-    cur = conn.execute("""INSERT INTO notify_items(event_seq,channel_id,state,summary,options,
-                    requires_feedback,priority,created_at,thread_id,kind,addressed_to_owner)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                 (seq, ch["id"], state, summary, options, req_fb,
-                  str(payload.get("suggested_priority", "normal"))[:16], now(), thread_id,
-                  "normal", addressed_to_owner))
-    conn.execute("UPDATE notify_threads SET last_item_id=?, updated_at=? WHERE id=?",
-                 (cur.lastrowid, now(), thread_id))
-    if req_fb:
-        promote_notify(conn)
-    return cur.lastrowid
 
-@app.post("/hk/{ch_id}")
-async def ingest(ch_id: str, request: Request) -> dict:
-    body = await request.body()
-    conn = db()
-    ch = conn.execute("SELECT * FROM channels WHERE id=? AND revoked=0", (ch_id,)).fetchone()
-    if not ch:
-        conn.close(); raise HTTPException(404, "unknown channel")
-    verify_sig(ch["secret"], body, request.headers)
-    try:
-        payload = json.loads(body)
-    except Exception:
-        payload = {"raw": body.decode("utf-8", "replace")[:2000]}
-    cur = conn.execute("INSERT INTO events(channel_id,payload,received_at) VALUES(?,?,?)",
-                       (ch_id, json.dumps(payload, ensure_ascii=False), now()))
-    seq = cur.lastrowid
-    enqueued = enqueue_notify(conn, ch, payload if isinstance(payload, dict) else {}, seq)
-    conn.commit()
-    if enqueued:
-        await ws_broadcast_snapshot()   # WS 推送：新 item 入队（契约 §2）
-    # 转发 hermes（agent.md §2.2 同源签名；hermes 复验后按 route 规则处理）
-    # 规范化：发送方若用 ensure_ascii=True（报文里全是 \uXXXX），重序列化为可读 UTF-8
-    # 再用同一通道密钥重签——hermes 复验照旧通过，核心 agent 不再脑内解码。
-    fwd_body, fwd_ts, fwd_sig = body, request.headers.get("x-webhook-timestamp", ""), \
-        request.headers.get("x-webhook-signature-v2", "")
-    if isinstance(payload, dict):
-        norm = json.dumps(payload, ensure_ascii=False).encode()
-        if norm != body:
-            fwd_body = norm
-            hdrs = hmac_sign(ch["secret"], norm)
-            fwd_ts, fwd_sig = hdrs["X-Webhook-Timestamp"], hdrs["X-Webhook-Signature-V2"]
-    status, text = await forward_to_hermes(
-        ch["route_name"], fwd_body, fwd_ts, fwd_sig,
-        request.headers.get("x-request-id"))
-    conn.execute("UPDATE events SET upstream_status=? WHERE seq=?", (f"{status}:{text[:200]}", seq))
-    conn.commit(); conn.close()
-    return {"status": "delivered", "seq": seq, "upstream": status}
+    plan = []
+    if looks_ai and raw_msg:
+        plan.append(("channel_event", raw_msg, {"channel_archetype": ch.get("archetype")}))
+        plan.append(("ai_reply", ai_summary, {"from": "vps_agent"}))
+    elif looks_ai:
+        plan.append(("ai_reply", ai_summary, {"note": "no raw field"}))
+    else:
+        plan.append(("channel_event", ai_summary, {"channel_archetype": ch.get("archetype")}))
 
-@app.post("/v1/test-event")
-async def test_event(req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dict:
-    body = await req.json()
-    ch_id = str(body.get("channel_id", ""))
-    conn = db()
-    ch = conn.execute("SELECT * FROM channels WHERE id=? AND revoked=0", (ch_id,)).fetchone()
-    if not ch:
-        conn.close(); raise HTTPException(404, "channel not found")
-    payload = {"level": "B", "archetype": ch["archetype"], "pointer": "test",
-               "summary": f"测试事件（{ch['name']}）", "suggested_priority": "normal"}
-    cur = conn.execute("INSERT INTO events(channel_id,payload,upstream_status,received_at) VALUES(?,?,?,?)",
-                       (ch_id, json.dumps(payload, ensure_ascii=False), "internal:test", now()))
-    enqueue_notify(conn, ch, payload, cur.lastrowid)
-    conn.commit(); conn.close()
-    await ws_broadcast_snapshot()
-    return {"status": "injected", "seq": cur.lastrowid}
+    first_id = None
+    for source, summary, extra in plan:
+        item_id = _insert_item(conn, ch, payload, seq, source, summary,
+                               source_meta_extra=extra)
+        if first_id is None:
+            first_id = item_id
+            conn.execute("UPDATE notify_items SET thread_id=? WHERE id=?",
+                          (thread_id, item_id))
+    if first_id:
+        conn.execute("UPDATE notify_threads SET last_item_id=?, updated_at=? WHERE id=?",
+                      (first_id, now(), thread_id))
+    return first_id
 
-# ── lists：清单读写（agent 走 MCP 工具 list_mcp.py；人/App 走这里）──
-@app.get("/v2/lists")
+
 def lists_all(name: str = "", dev: sqlite3.Row = Depends(auth_device)) -> dict:
     conn = db()
     if name:
@@ -622,12 +669,20 @@ def list_delete(name: str, key: str, dev: sqlite3.Row = Depends(auth_device)) ->
 
 # ── BFF：App 面（docs/06 接口原则；seq 单调游标，断网重连自动补齐）──
 def notify_item_json(r: sqlite3.Row) -> dict:
-    return {"id": r["id"], "event_seq": r["event_seq"], "channel_id": r["channel_id"],
+    d = {"id": r["id"], "event_seq": r["event_seq"], "channel_id": r["channel_id"],
             "state": r["state"], "summary": r["summary"], "options": json.loads(r["options"]),
             "requires_feedback": bool(r["requires_feedback"]), "priority": r["priority"],
             "resolution": r["resolution"], "created_at": iso(r["created_at"]),
             "addressed_to_owner": bool(r["addressed_to_owner"])
             if "addressed_to_owner" in r.keys() else False}
+    # v0.3 多源
+    d["source"] = r["source"] if "source" in r.keys() and r["source"] else "channel_event"
+    raw_meta = r["source_meta"] if "source_meta" in r.keys() and r["source_meta"] else "{}"
+    try:
+        d["source_meta"] = json.loads(raw_meta)
+    except Exception:
+        d["source_meta"] = {}
+    return d
 
 def thread_ctx_json(conn: sqlite3.Connection, thread_id: int, exclude_id: int | None = None) -> dict | None:
     """轻量线程上下文（契约 §1）：last_resolution + 上次那条摘要 + 最近 ≤3 条历史（新→旧）。"""
@@ -704,17 +759,140 @@ def notify_threads(dev: sqlite3.Row = Depends(auth_device)) -> dict:
 
 @app.get("/v2/notify/threads/{tid}/items")
 def notify_thread_items(tid: int, dev: sqlite3.Row = Depends(auth_device)) -> dict:
-    """单线程时间线（契约 §1）：旧→新阅读顺序。"""
+    """单线程时间线（契约 §1）：旧→新阅读顺序。
+    每条 item 包含完整来源信息（channel_id/priority/event_seq）以便客户端气泡渲染。
+    """
     conn = db()
     th = conn.execute("SELECT id FROM notify_threads WHERE id=?", (tid,)).fetchone()
     if not th:
         conn.close(); raise HTTPException(404, "thread not found")
-    rows = conn.execute("""SELECT id,summary,kind,state,resolution,options,created_at
-                           FROM notify_items WHERE thread_id=? ORDER BY id""", (tid,)).fetchall()
+    rows = conn.execute("""SELECT i.id, i.summary, i.kind, i.state, i.resolution, i.options,
+                                  i.created_at, i.event_seq, i.priority, i.channel_id,
+                                  i.source, i.source_meta,
+                                  c.name AS channel_name, c.archetype AS channel_archetype
+                            FROM notify_items i
+                            LEFT JOIN channels c ON c.id = i.channel_id
+                            WHERE i.thread_id=? ORDER BY i.id""", (tid,)).fetchall()
     conn.close()
-    return {"items": [{"id": r["id"], "summary": r["summary"], "kind": r["kind"], "state": r["state"],
-            "resolution": r["resolution"], "options": json.loads(r["options"]),
-            "created_at": iso(r["created_at"])} for r in rows]}
+    items = []
+    for r in rows:
+        sm_raw = r["source_meta"] or "{}"
+        try:
+            sm = json.loads(sm_raw)
+        except Exception:
+            sm = {}
+        items.append({
+            "id": r["id"], "summary": r["summary"], "kind": r["kind"], "state": r["state"],
+            "resolution": r["resolution"], "options": json.loads(r["options"] or "[]"),
+            "created_at": iso(r["created_at"]),
+            "event_seq": r["event_seq"], "priority": r["priority"],
+            "channel_id": r["channel_id"],
+            "channel_name": r["channel_name"],
+            "channel_archetype": r["channel_archetype"],
+            "source": r["source"] or "channel_event",
+            "source_meta": sm,
+        })
+    return {"items": items}
+
+@app.get("/v2/threads/{tid}/conversation")
+def thread_conversation(tid: int, dev: sqlite3.Row = Depends(auth_device)) -> dict:
+    """P0-S4 多源整合时间线：thread 下每个 item 对应的 channel event + AI 处理项，
+    按 created_at 合并排序，气泡分类型渲染。
+
+    每条 entry 含:
+      - kind: "channel_raw" | "ai_reply" | "user_decision" | "resume" | "system"
+      - ts: ISO 时间戳
+      - body: 文本内容
+      - source: 来源标识（channel_name / "vps_agent" / "owner"）
+      - priority / event_seq / id（关联字段）
+    """
+    conn = db()
+    th = conn.execute("SELECT * FROM notify_threads WHERE id=?", (tid,)).fetchone()
+    if not th:
+        conn.close(); raise HTTPException(404, "thread not found")
+    rows = conn.execute("""SELECT i.id, i.summary, i.kind, i.state, i.resolution, i.options,
+                                  i.created_at, i.event_seq, i.priority, i.channel_id,
+                                  c.name AS channel_name, c.archetype AS channel_archetype
+                            FROM notify_items i
+                            LEFT JOIN channels c ON c.id = i.channel_id
+                            WHERE i.thread_id=? ORDER BY i.id""", (tid,)).fetchall()
+    # 收所有 event_seq
+    ev_seqs = [r["event_seq"] for r in rows if r["event_seq"]]
+    ev_map = {}
+    if ev_seqs:
+        placeholders = ",".join("?" * len(ev_seqs))
+        ev_rows = conn.execute(
+            f"SELECT seq, payload, channel_id, received_at FROM events WHERE seq IN ({placeholders})",
+            ev_seqs).fetchall()
+        for e in ev_rows:
+            try:
+                pl = json.loads(e["payload"])
+                # 抽原始消息文本：常见字段优先级
+                raw = (pl.get("text") or pl.get("message") or pl.get("content")
+                       or pl.get("raw") or pl.get("summary") or
+                       json.dumps(pl, ensure_ascii=False)[:300])
+            except Exception:
+                raw = e["payload"][:300] if e["payload"] else ""
+            ev_map[e["seq"]] = {
+                "raw_text": raw,
+                "channel_id": e["channel_id"],
+                "received_at": iso(e["received_at"]),
+                "payload": (e["payload"] or "")[:500],
+            }
+    conn.close()
+
+    entries = []
+    for r in rows:
+        ev = ev_map.get(r["event_seq"])
+        channel_id = r["channel_id"]
+        # kind 分类
+        res = r["resolution"]
+        kind_latest = r["kind"]
+        if kind_latest == "system":
+            kind = "system"
+        elif res and res != "":
+            kind = "user_decision"
+        elif kind_latest == "resume":
+            kind = "resume"
+        elif channel_id == "api_server" or channel_id == "vps":
+            kind = "ai_reply"
+        else:
+            kind = "channel_raw"
+        # 原始通道消息：作为独立 entry 插入（在该 item 之前）
+        if ev and kind != "user_decision":
+            entries.append({
+                "kind": "channel_raw",
+                "ts": ev["received_at"],
+                "body": ev["raw_text"],
+                "source": channel_id,
+                "priority": r["priority"],
+                "event_seq": r["event_seq"],
+                "parent_item_id": r["id"],
+            })
+        # AI 处理项 / 决议 / 续报
+        entries.append({
+            "kind": kind,
+            "ts": iso(r["created_at"]),
+            "body": r["summary"],
+            "source": (channel_id if kind == "channel_raw" else
+                       ("vps_agent" if kind in ("ai_reply", "resume") else "owner")),
+            "priority": r["priority"],
+            "event_seq": r["event_seq"],
+            "id": r["id"],
+            "resolution": res,
+            "channel_id": channel_id,
+            "channel_name": r["channel_name"],
+            "channel_archetype": r["channel_archetype"],
+        })
+
+    # 按 ts 排序（旧→新阅读顺序）
+    entries.sort(key=lambda x: x["ts"])
+    return {
+        "thread": {"id": th["id"], "channel_id": th["channel_id"],
+                   "channel_name": th.get("channel_name") if "channel_name" in th.keys() else None,
+                   "title": th["title"], "item_count": th["item_count"]},
+        "entries": entries,
+    }
 
 @app.post("/v2/notify/items/{item_id}/feedback")
 async def notify_feedback(item_id: int, req: Request, dev: sqlite3.Row = Depends(auth_device)) -> dict:

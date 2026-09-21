@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v0.3 合并首页：Hero（今日概览 + 4 计数器）+ tab 切换（全部/会话/通知）+ 列表 -->
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/colorSurface">
+
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/inboxSwipe"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingBottom="88dp">
+
+                <!-- Hero 卡片（渐变 + 4 计数器横排） -->
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="16dp"
+                    app:cardCornerRadius="24dp"
+                    app:cardElevation="0dp"
+                    app:cardBackgroundColor="@android:color/transparent"
+                    app:strokeWidth="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:background="@drawable/bg_hero_gradient"
+                        android:padding="20dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/hero_title"
+                            android:textAppearance="@style/TextAppearance.LC.Headline"
+                            android:textColor="#FFFFFF"
+                            android:textSize="22sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/hero_subtitle"
+                            android:textColor="#E0FFFFFF"
+                            android:textSize="12sp" />
+
+                        <!-- 4 计数器 -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="16dp"
+                            android:orientation="horizontal">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/cntActive"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="0"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="24sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="进行中"
+                                    android:textColor="#C0FFFFFF"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/cntAwait"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="0"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="24sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="待处理"
+                                    android:textColor="#C0FFFFFF"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/cntSessions"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="0"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="24sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="会话"
+                                    android:textColor="#C0FFFFFF"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/cntEvents"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="0"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="24sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="总项"
+                                    android:textColor="#C0FFFFFF"
+                                    android:textSize="11sp" />
+                            </LinearLayout>
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- tab 切换 -->
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="12dp"
+                    android:scrollbars="none">
+
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/chipGroup"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:singleSelection="true"
+                        app:selectionRequired="true">
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipAll"
+                            style="@style/Widget.Material3.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checked="true"
+                            android:text="全部" />
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipSession"
+                            style="@style/Widget.Material3.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="💬 会话" />
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipNotify"
+                            style="@style/Widget.Material3.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="🔔 通知" />
+                    </com.google.android.material.chip.ChipGroup>
+                </HorizontalScrollView>
+
+                <!-- 列表 -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/inboxRv"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:nestedScrollingEnabled="false"
+                    android:overScrollMode="never" />
+
+                <!-- 空态 -->
+                <TextView
+                    android:id="@+id/inboxEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="48dp"
+                    android:gravity="center"
+                    android:padding="32dp"
+                    android:text="还没有任何会话或通知\n\n点击右下角 + 开始一个新会话"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textSize="14sp"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </androidx.core.widget.NestedScrollView>
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+    <!-- FAB 新建会话 -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabNew"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="20dp"
+        android:contentDescription="新建会话"
+        app:srcCompat="@android:drawable/ic_input_add"
+        app:tint="#FFFFFF"
+        app:backgroundTint="?attr/colorPrimary" />
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

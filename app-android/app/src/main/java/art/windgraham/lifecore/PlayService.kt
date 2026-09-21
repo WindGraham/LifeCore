@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.pm.ServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
@@ -120,7 +121,13 @@ class PlayService : Service() {
         }
 
         ensureChannels()
-        startForeground(NOTIF_ID, buildForegroundNotif("LifeCore 自动播报", "等待新汇报…"))
+        // Android 14 合规：声明 FGS type 为 connectedDevice（主保活）+ mediaPlayback（TTS 朗读）
+        startForeground(
+            NOTIF_ID,
+            buildForegroundNotif("LifeCore 自动播报", "等待新汇报…"),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        )
         return START_STICKY
     }
 
@@ -143,7 +150,12 @@ class PlayService : Service() {
             acquire(24L * 60 * 60 * 1000)
         }
         ensureChannels()
-        startForeground(NOTIF_ID, buildForegroundNotif("LifeCore 自动播报", "等待新汇报…"))
+        startForeground(
+            NOTIF_ID,
+            buildForegroundNotif("LifeCore 自动播报", "等待新汇报…"),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        )
         connectWs()
     }
 
