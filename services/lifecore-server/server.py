@@ -826,16 +826,36 @@ def thread_conversation(tid: int, dev: sqlite3.Row = Depends(auth_device)) -> di
             f"SELECT seq, payload, channel_id, received_at FROM events WHERE seq IN ({placeholders})",
             ev_seqs).fetchall()
         for e in ev_rows:
+            # AI 标签（用于从 AI 改写过的 payload 里拆出"原始消息段"）
+            ai_split_markers = (
+                "\n内容：", "\n事实：", "\n重要性依据：", "\n关系度：",
+                "\n建议动作：", "\n建议：",
+            )
             try:
                 pl = json.loads(e["payload"])
-                # 抽原始消息文本：常见字段优先级
-                raw = (pl.get("text") or pl.get("message") or pl.get("content")
-                       or pl.get("raw") or pl.get("summary") or
-                       json.dumps(pl, ensure_ascii=False)[:300])
+                # 1) 先取 summary 字段（这是 AI 改写过的）
+                summary = pl.get("summary", "") or ""
+                # 2) 拆出"原文段" = summary 里 AI 标签之前的部分（通常前 30~60 字）
+                raw = summary
+                cut = len(summary)
+                for mk in ai_split_markers:
+                    idx = summary.find(mk)
+                    if 0 < idx < cut:
+                        cut = idx
+                raw = summary[:cut].rstrip("，,。.\n ")
+                # 3) 兜底：如果 raw 太短（<8 字），用 message/text/content
+                if len(raw.strip()) < 8:
+                    for k in ("text", "message", "content", "raw", "body"):
+                        v = pl.get(k)
+                        if isinstance(v, str) and v.strip():
+                            raw = v[:300]
+                            break
+                if not raw:
+                    raw = json.dumps(pl, ensure_ascii=False)[:300]
             except Exception:
                 raw = e["payload"][:300] if e["payload"] else ""
             ev_map[e["seq"]] = {
-                "raw_text": raw,
+                "raw_text": raw[:500],
                 "channel_id": e["channel_id"],
                 "received_at": iso(e["received_at"]),
                 "payload": (e["payload"] or "")[:500],
