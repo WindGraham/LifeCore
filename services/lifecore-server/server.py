@@ -845,45 +845,73 @@ def thread_conversation(tid: int, dev: sqlite3.Row = Depends(auth_device)) -> di
     for r in rows:
         ev = ev_map.get(r["event_seq"])
         channel_id = r["channel_id"]
-        # kind 分类
+        # kind 分类（v0.3 多源）
         res = r["resolution"]
         kind_latest = r["kind"]
+        # 新字段：item.source（v0.3 入队时已拆）；老数据无 source
+        item_source = r["source"] if "source" in r.keys() and r["source"] else ""
         if kind_latest == "system":
             kind = "system"
         elif res and res != "":
             kind = "user_decision"
         elif kind_latest == "resume":
             kind = "resume"
-        elif channel_id == "api_server" or channel_id == "vps":
+        elif item_source == "ai_reply":
+            kind = "ai_reply"
+        elif item_source == "channel_event":
+            kind = "channel_raw"
+        elif channel_id in ("api_server", "vps"):
             kind = "ai_reply"
         else:
+            # 老数据：所有 item 默认按 channel_event 处理（让客户端知道这是通道原始事件，
+            # 客户端再按内容启发式决定要不要再拆 AI 段显示）
             kind = "channel_raw"
-        # 原始通道消息：作为独立 entry 插入（在该 item 之前）
-        if ev and kind != "user_decision":
+
+        # v0.3 多源拆分：除非是用户决议/续报/系统，每条 item 拆成
+        #   1. channel_raw（从 events 表 raw_text 拿原始消息）
+        #   2. 另一条 entry（kind 决定的 ai_reply / channel_raw / resume 等）
+        if kind in ("channel_raw", "ai_reply"):
+            # 有原始消息：插在前面
+            if ev:
+                entries.append({
+                    "kind": "channel_raw",
+                    "ts": ev["received_at"],
+                    "body": ev["raw_text"],
+                    "source": channel_id,
+                    "priority": r["priority"],
+                    "event_seq": r["event_seq"],
+                    "parent_item_id": r["id"],
+                })
+            # AI 回复 / 原始消息（同 item）插在后面
             entries.append({
-                "kind": "channel_raw",
-                "ts": ev["received_at"],
-                "body": ev["raw_text"],
-                "source": channel_id,
+                "kind": kind,
+                "ts": iso(r["created_at"]),
+                "body": r["summary"],
+                "source": (channel_id if kind == "channel_raw" else "vps_agent"),
                 "priority": r["priority"],
                 "event_seq": r["event_seq"],
-                "parent_item_id": r["id"],
+                "id": r["id"],
+                "resolution": res,
+                "channel_id": channel_id,
+                "channel_name": r["channel_name"],
+                "channel_archetype": r["channel_archetype"],
             })
-        # AI 处理项 / 决议 / 续报
-        entries.append({
-            "kind": kind,
-            "ts": iso(r["created_at"]),
-            "body": r["summary"],
-            "source": (channel_id if kind == "channel_raw" else
-                       ("vps_agent" if kind in ("ai_reply", "resume") else "owner")),
-            "priority": r["priority"],
-            "event_seq": r["event_seq"],
-            "id": r["id"],
-            "resolution": res,
-            "channel_id": channel_id,
-            "channel_name": r["channel_name"],
-            "channel_archetype": r["channel_archetype"],
-        })
+        else:
+            # 决议 / 续报 / 系统：单条 entry
+            entries.append({
+                "kind": kind,
+                "ts": iso(r["created_at"]),
+                "body": r["summary"],
+                "source": ("vps_agent" if kind == "resume" else
+                           ("owner" if kind == "user_decision" else "system")),
+                "priority": r["priority"],
+                "event_seq": r["event_seq"],
+                "id": r["id"],
+                "resolution": res,
+                "channel_id": channel_id,
+                "channel_name": r["channel_name"],
+                "channel_archetype": r["channel_archetype"],
+            })
 
     # 按 ts 排序（旧→新阅读顺序）
     entries.sort(key=lambda x: x["ts"])
